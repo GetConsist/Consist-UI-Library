@@ -310,7 +310,7 @@ local THEMES = {
         shadow = Color3.fromRGB(80, 85, 94),
         toggleOff = Color3.fromRGB(229, 232, 237),
         toggleStroke = Color3.fromRGB(218, 222, 228),
-        popup = Color3.fromRGB(249, 250, 252),
+        popup = Color3.fromRGB(243, 244, 247),
     },
     Dark = {
         shell = Color3.fromRGB(18, 19, 22),
@@ -333,7 +333,7 @@ local THEMES = {
         shadow = Color3.fromRGB(0, 0, 0),
         toggleOff = Color3.fromRGB(36, 38, 44),
         toggleStroke = Color3.fromRGB(49, 51, 58),
-        popup = Color3.fromRGB(21, 22, 26),
+        popup = Color3.fromRGB(23, 24, 28),
     },
     Black = {
         shell = Color3.fromRGB(9, 10, 12),
@@ -356,7 +356,7 @@ local THEMES = {
         shadow = Color3.fromRGB(0, 0, 0),
         toggleOff = Color3.fromRGB(28, 30, 35),
         toggleStroke = Color3.fromRGB(42, 44, 50),
-        popup = Color3.fromRGB(12, 13, 16),
+        popup = Color3.fromRGB(14, 15, 18),
     },
 }
 
@@ -398,6 +398,118 @@ local App = new("Frame", {
 }, Screen)
 round(App, 15)
 local AppStroke = stroke(App, THEMES[activeThemeName].strokeStrong, 1, 0)
+
+-- Keep the fixed design canvas crisp while still allowing the interface to
+-- fit comfortably on smaller viewports. The user scale and viewport-fit
+-- scale are kept separate so resizing the game does not overwrite a choice.
+local APP_BASE_SIZE = Vector2.new(748, 474)
+local VIEWPORT_MARGIN = 24
+local MIN_INTERFACE_SCALE = 0.80
+local MAX_INTERFACE_SCALE = 1.20
+local interfaceScale = 1
+
+local AppScale = new("UIScale", {
+    Scale = 1,
+}, App)
+
+local popupScales = setmetatable({}, {__mode = "k"})
+local PopupDimmer
+
+local function positionPopupDimmer()
+    if not PopupDimmer or not PopupDimmer.Parent then
+        return
+    end
+
+    PopupDimmer.Position = UDim2.fromOffset(
+        App.AbsolutePosition.X - Overlay.AbsolutePosition.X,
+        App.AbsolutePosition.Y - Overlay.AbsolutePosition.Y
+    )
+    PopupDimmer.Size = UDim2.fromOffset(App.AbsoluteSize.X, App.AbsoluteSize.Y)
+end
+
+local function scalePopup(frame)
+    local scaler = new("UIScale", {
+        Scale = AppScale.Scale,
+    }, frame)
+    popupScales[frame] = scaler
+    return scaler
+end
+
+local function getViewportSize()
+    local camera = workspace.CurrentCamera
+    if camera and camera.ViewportSize.X > 0 and camera.ViewportSize.Y > 0 then
+        return camera.ViewportSize
+    end
+
+    return Vector2.new(1920, 1080)
+end
+
+local function getFitScale()
+    local viewport = getViewportSize()
+    local availableWidth = math.max(1, viewport.X - VIEWPORT_MARGIN * 2)
+    local availableHeight = math.max(1, viewport.Y - VIEWPORT_MARGIN * 2)
+    return math.min(
+        MAX_INTERFACE_SCALE,
+        availableWidth / APP_BASE_SIZE.X,
+        availableHeight / APP_BASE_SIZE.Y
+    )
+end
+
+local function clampAppToViewport()
+    local viewport = getViewportSize()
+    local renderedSize = APP_BASE_SIZE * AppScale.Scale
+    local halfWidth = renderedSize.X * 0.5
+    local halfHeight = renderedSize.Y * 0.5
+    local center = Vector2.new(
+        viewport.X * App.Position.X.Scale + App.Position.X.Offset,
+        viewport.Y * App.Position.Y.Scale + App.Position.Y.Offset
+    )
+
+    local minX = halfWidth + VIEWPORT_MARGIN
+    local maxX = viewport.X - halfWidth - VIEWPORT_MARGIN
+    local minY = halfHeight + VIEWPORT_MARGIN
+    local maxY = viewport.Y - halfHeight - VIEWPORT_MARGIN
+
+    local x = minX <= maxX and math.clamp(center.X, minX, maxX) or viewport.X * 0.5
+    local y = minY <= maxY and math.clamp(center.Y, minY, maxY) or viewport.Y * 0.5
+    App.Position = UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
+end
+
+local function applyInterfaceScale()
+    AppScale.Scale = math.min(interfaceScale, getFitScale())
+
+    for frame, scaler in pairs(popupScales) do
+        if frame.Parent and scaler.Parent then
+            scaler.Scale = AppScale.Scale
+        else
+            popupScales[frame] = nil
+        end
+    end
+
+    clampAppToViewport()
+    task.defer(positionPopupDimmer)
+end
+
+local viewportConnection
+local function watchViewport()
+    if viewportConnection then
+        viewportConnection:Disconnect()
+        viewportConnection = nil
+    end
+
+    local camera = workspace.CurrentCamera
+    if camera then
+        viewportConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(applyInterfaceScale)
+    end
+end
+
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    watchViewport()
+    applyInterfaceScale()
+end)
+
+watchViewport()
+task.defer(applyInterfaceScale)
 
 local themed = {}
 local function themeObject(object, property, key)
@@ -485,10 +597,24 @@ SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
     end
 end)
 
+SearchBox.Focused:Connect(function()
+    tween(SearchPanelStroke, 0.12, {Color = Accent, Transparency = 0.05})
+    tween(SearchPanel, 0.12, {BackgroundColor3 = THEMES[activeThemeName].field})
+end)
+
+SearchBox.FocusLost:Connect(function()
+    tween(SearchPanelStroke, 0.12, {
+        Color = THEMES[activeThemeName].stroke,
+        Transparency = 0.15,
+    })
+    tween(SearchPanel, 0.12, {BackgroundColor3 = THEMES[activeThemeName].surface})
+end)
+
 local SettingsButton = new("ImageButton", {
-    Position = UDim2.fromOffset(206, 8),
+    Position = UDim2.fromOffset(212, 8),
     Size = UDim2.fromOffset(24, 24),
-    BackgroundTransparency = 1,
+    BackgroundColor3 = THEMES[activeThemeName].surface,
+    BackgroundTransparency = 0,
     BorderSizePixel = 0,
     AutoButtonColor = false,
     Image = resolveHostedIcon("Settings"),
@@ -496,6 +622,10 @@ local SettingsButton = new("ImageButton", {
     ScaleType = Enum.ScaleType.Fit,
     ZIndex = 20,
 }, App)
+round(SettingsButton, 10)
+themeObject(SettingsButton, "BackgroundColor3", "surface")
+local SettingsButtonStroke = stroke(SettingsButton, THEMES[activeThemeName].stroke, 1, 0.15)
+themeObject(SettingsButtonStroke, "Color", "stroke")
 themeObject(SettingsButton, "ImageColor3", "icon")
 
 
@@ -622,7 +752,8 @@ local Main = new("Frame", {
 }, App)
 
 local Content = new("Frame", {
-    Position = UDim2.fromOffset(28, 45),
+    -- Centers the two 258 px columns between the sidebar and right edge.
+    Position = UDim2.fromOffset(18, 45),
     Size = UDim2.fromOffset(538, 417),
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
@@ -656,7 +787,7 @@ local function makeSection(titleText, x, y, width, height, parent)
         BorderSizePixel = 0,
         ZIndex = 0,
     }, parent)
-    round(shadow, 12)
+    round(shadow, 10)
     themeObject(shadow, "BackgroundColor3", "shadow")
 
     local panel = new("Frame", {
@@ -666,7 +797,7 @@ local function makeSection(titleText, x, y, width, height, parent)
         ClipsDescendants = true,
         ZIndex = 1,
     }, parent)
-    round(panel, 12)
+    round(panel, 10)
     themeObject(panel, "BackgroundColor3", "surface")
     local panelStroke = stroke(panel, THEMES[activeThemeName].stroke, 1, 0.15)
     themeObject(panelStroke, "Color", "stroke")
@@ -689,12 +820,12 @@ local function makeToggle(parent, x, y, initial, onChanged)
 
     local box = new("Frame", {
         Position = UDim2.fromOffset(x, y),
-        Size = UDim2.fromOffset(17, 17),
+        Size = UDim2.fromOffset(15, 15),
         BackgroundColor3 = state and Accent or THEMES[activeThemeName].toggleOff,
         BorderSizePixel = 0,
         ZIndex = 8,
     }, parent)
-    round(box, 5)
+    round(box, 4)
 
     local boxStroke = stroke(
         box,
@@ -712,7 +843,7 @@ local function makeToggle(parent, x, y, initial, onChanged)
     end
 
     local hit = new("TextButton", {
-        Position = UDim2.fromOffset(x - 3, y - 3),
+        Position = UDim2.fromOffset(x - 4, y - 4),
         Size = UDim2.fromOffset(24, 24),
         BackgroundTransparency = 1,
         Text = "",
@@ -761,10 +892,48 @@ local activeSubmenuButton
 local activeDropdownButton
 local activeDropdownArrow
 local activeColorPickerButton
+local SettingsPopupOpen = false
 local closePopup
 local closeSubmenu
 local closeDropdown
 local closeColorPicker
+local closeSettingsPopup
+
+local function showPopupDimmer()
+    if not PopupDimmer or not PopupDimmer.Parent then
+        PopupDimmer = new("TextButton", {
+            BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+            BackgroundTransparency = 0.48,
+            BorderSizePixel = 0,
+            Text = "",
+            AutoButtonColor = false,
+            Active = true,
+            ZIndex = 1200,
+        }, Overlay)
+        round(PopupDimmer, 14)
+        PopupDimmer.MouseButton1Click:Connect(function()
+            closePopup()
+            closeDropdown()
+            closeColorPicker()
+            closeSettingsPopup()
+        end)
+    end
+
+    positionPopupDimmer()
+    PopupDimmer.BackgroundTransparency = 1
+    tween(PopupDimmer, 0.10, {BackgroundTransparency = 0.48})
+end
+
+local function hidePopupDimmerIfUnused()
+    if activePopup or activeSubmenu or activeColorPicker or SettingsPopupOpen then
+        return
+    end
+
+    if PopupDimmer then
+        PopupDimmer:Destroy()
+        PopupDimmer = nil
+    end
+end
 
 local function pointInside(guiObject, point)
     if not guiObject or not guiObject.Parent then
@@ -782,6 +951,7 @@ closeColorPicker = function()
         activeColorPicker = nil
     end
     activeColorPickerButton = nil
+    hidePopupDimmerIfUnused()
 end
 
 closeDropdown = function()
@@ -806,6 +976,7 @@ closeSubmenu = function()
         activeSubmenu = nil
     end
     activeSubmenuButton = nil
+    hidePopupDimmerIfUnused()
 end
 
 closePopup = function()
@@ -816,6 +987,7 @@ closePopup = function()
         activePopup = nil
     end
     activePopupButton = nil
+    hidePopupDimmerIfUnused()
 end
 
 local function capturePopupSurface(frame, zIndex)
@@ -838,6 +1010,9 @@ local function capturePopupSurface(frame, zIndex)
 end
 
 local function popupPositionBeside(anchorButton, width, height, preferRight)
+    local popupScale = AppScale.Scale
+    local renderedWidth = width * popupScale
+    local renderedHeight = height * popupScale
     local appPos = App.AbsolutePosition
     local appSize = App.AbsoluteSize
     local anchorPos = anchorButton.AbsolutePosition
@@ -856,23 +1031,26 @@ local function popupPositionBeside(anchorButton, width, height, preferRight)
     local x
     if preferRight then
         x = right + 6
-        if x + width > appRight then
-            x = left - width - 6
+        if x + renderedWidth > appRight then
+            x = left - renderedWidth - 6
         end
     else
-        x = left - width - 6
+        x = left - renderedWidth - 6
         if x < appLeft then
             x = right + 6
         end
     end
 
-    x = math.clamp(x, appLeft, math.max(appLeft, appRight - width))
-    local y = math.clamp(top - 4, appTop, math.max(appTop, appBottom - height))
+    x = math.clamp(x, appLeft, math.max(appLeft, appRight - renderedWidth))
+    local y = math.clamp(top - 4, appTop, math.max(appTop, appBottom - renderedHeight))
 
     return UDim2.fromOffset(math.floor(x), math.floor(y))
 end
 
 local function popupPositionOutsideChain(anchorButton, width, height)
+    local popupScale = AppScale.Scale
+    local renderedWidth = width * popupScale
+    local renderedHeight = height * popupScale
     local appPos = App.AbsolutePosition
     local appSize = App.AbsoluteSize
     local overlayPos = Overlay.AbsolutePosition
@@ -900,9 +1078,9 @@ local function popupPositionOutsideChain(anchorButton, width, height)
 
     local gap = 6
     local rightCandidate = chainRight + gap
-    local leftCandidate = chainLeft - width - gap
+    local leftCandidate = chainLeft - renderedWidth - gap
 
-    local rightFits = rightCandidate + width <= appRight
+    local rightFits = rightCandidate + renderedWidth <= appRight
     local leftFits = leftCandidate >= appLeft
 
     local anchorCenter = (anchorPos.X - overlayPos.X) + (anchorSize.X * 0.5)
@@ -935,19 +1113,22 @@ local function popupPositionOutsideChain(anchorButton, width, height)
         local rightRoom = appRight - chainRight
         local leftRoom = chainLeft - appLeft
         if rightRoom >= leftRoom then
-            x = math.clamp(rightCandidate, appLeft, math.max(appLeft, appRight - width))
+            x = math.clamp(rightCandidate, appLeft, math.max(appLeft, appRight - renderedWidth))
         else
-            x = math.clamp(leftCandidate, appLeft, math.max(appLeft, appRight - width))
+            x = math.clamp(leftCandidate, appLeft, math.max(appLeft, appRight - renderedWidth))
         end
     end
 
     local anchorTop = anchorPos.Y - overlayPos.Y
-    local y = math.clamp(anchorTop - 4, appTop, math.max(appTop, appBottom - height))
+    local y = math.clamp(anchorTop - 4, appTop, math.max(appTop, appBottom - renderedHeight))
 
     return UDim2.fromOffset(math.floor(x), math.floor(y))
 end
 
 local function popupPositionNextTo(referenceFrame, width, height, preferRight)
+    local popupScale = AppScale.Scale
+    local renderedWidth = width * popupScale
+    local renderedHeight = height * popupScale
     local appPos = App.AbsolutePosition
     local appSize = App.AbsoluteSize
     local overlayPos = Overlay.AbsolutePosition
@@ -965,12 +1146,12 @@ local function popupPositionNextTo(referenceFrame, width, height, preferRight)
 
     local gap = 6
     local rightCandidate = right + gap
-    local leftCandidate = left - width - gap
+    local leftCandidate = left - renderedWidth - gap
 
     local x
     if preferRight then
         x = rightCandidate
-        if x + width > appRight then
+        if x + renderedWidth > appRight then
             x = leftCandidate
         end
     else
@@ -980,8 +1161,8 @@ local function popupPositionNextTo(referenceFrame, width, height, preferRight)
         end
     end
 
-    x = math.clamp(x, appLeft, math.max(appLeft, appRight - width))
-    local y = math.clamp(top, appTop, math.max(appTop, appBottom - height))
+    x = math.clamp(x, appLeft, math.max(appLeft, appRight - renderedWidth))
+    local y = math.clamp(top, appTop, math.max(appTop, appBottom - renderedHeight))
 
     return UDim2.fromOffset(math.floor(x), math.floor(y))
 end
@@ -992,9 +1173,10 @@ local function makeDots(parent, x, y, onClick)
         Size = UDim2.fromOffset(28, 18),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Text = "· · ·",
+        Text = "•••",
         Font = UI_FONT_BOLD,
-        TextSize = 14,
+        TextSize = 10,
+        TextYAlignment = Enum.TextYAlignment.Center,
         AutoButtonColor = false,
         ZIndex = 12,
     }, parent)
@@ -1016,7 +1198,7 @@ end
 local function makeRow(parent, y, textValue, disabled)
     local row = new("Frame", {
         Position = UDim2.fromOffset(0, y),
-        Size = UDim2.new(1, 0, 0, 36),
+        Size = UDim2.new(1, 0, 0, 32),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
     }, parent)
@@ -1025,7 +1207,7 @@ local function makeRow(parent, y, textValue, disabled)
         Position = UDim2.fromOffset(10, 0),
         Size = UDim2.new(1, -78, 1, 0),
         Text = textValue,
-        TextSize = 13,
+        TextSize = 12,
         Font = UI_FONT_MEDIUM,
     })
 
@@ -1051,14 +1233,14 @@ local function makePremiumSlider(parent, y, titleText, valueText, alpha, sliderO
     end
     local holder = new("Frame", {
         Position = UDim2.fromOffset(0, y),
-        Size = UDim2.new(1, 0, 0, 52),
+        Size = UDim2.new(1, 0, 0, 44),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
     }, parent)
 
     local title = label(holder, {
-        Position = UDim2.fromOffset(10, 3),
-        Size = UDim2.new(1, -92, 0, 18),
+        Position = UDim2.fromOffset(10, 1),
+        Size = UDim2.new(1, -92, 0, 17),
         Text = titleText,
         TextSize = 12,
         Font = UI_FONT_MEDIUM,
@@ -1067,18 +1249,18 @@ local function makePremiumSlider(parent, y, titleText, valueText, alpha, sliderO
 
     local value = label(holder, {
         AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -10, 0, 3),
-        Size = UDim2.fromOffset(78, 18),
+        Position = UDim2.new(1, -10, 0, 1),
+        Size = UDim2.fromOffset(78, 17),
         Text = valueText,
         Font = SLIDER_FONT,
         TextSize = 12,
         TextXAlignment = Enum.TextXAlignment.Right,
     })
-    themeObject(value, "TextColor3", "muted")
+    themeObject(value, "TextColor3", "label")
 
     local track = new("Frame", {
-        Position = UDim2.fromOffset(18, 31),
-        Size = UDim2.new(1, -36, 0, 5),
+        Position = UDim2.fromOffset(12, 27),
+        Size = UDim2.new(1, -24, 0, 3),
         BorderSizePixel = 0,
         ZIndex = 4,
     }, holder)
@@ -1097,7 +1279,7 @@ local function makePremiumSlider(parent, y, titleText, valueText, alpha, sliderO
     local shadow = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(alpha or 0.5, 0, 0.5, 1),
-        Size = UDim2.fromOffset(14, 14),
+        Size = UDim2.fromOffset(10, 10),
         BackgroundTransparency = 0.84,
         BorderSizePixel = 0,
         ZIndex = 5,
@@ -1108,7 +1290,7 @@ local function makePremiumSlider(parent, y, titleText, valueText, alpha, sliderO
     local knob = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(alpha or 0.5, 0, 0.5, 0),
-        Size = UDim2.fromOffset(11, 11),
+        Size = UDim2.fromOffset(8, 8),
         BorderSizePixel = 0,
         ZIndex = 7,
     }, track)
@@ -1217,8 +1399,9 @@ local function openDropdown(anchorButton, arrow, values, onSelected)
 
     closeDropdown()
 
-    local width = anchorButton.AbsoluteSize.X
-    local fieldHeight = anchorButton.AbsoluteSize.Y
+    local popupScale = math.max(0.01, AppScale.Scale)
+    local width = anchorButton.AbsoluteSize.X / popupScale
+    local fieldHeight = anchorButton.AbsoluteSize.Y / popupScale
     local optionHeight = 24
     local contentHeight = fieldHeight + (#values * optionHeight) + 6
     local overlayPos = Overlay.AbsolutePosition
@@ -1239,6 +1422,7 @@ local function openDropdown(anchorButton, arrow, values, onSelected)
         Active = true,
         ZIndex = zBase,
     }, Overlay)
+    scalePopup(menu)
     round(menu, 8)
     local menuStroke = stroke(menu, THEMES[activeThemeName].stroke, 1, 0.15)
     themeObject(menuStroke, "Color", "stroke")
@@ -1273,7 +1457,7 @@ local function openDropdown(anchorButton, arrow, values, onSelected)
         Position = UDim2.fromOffset(9, 0),
         Size = UDim2.new(1, -32, 1, 0),
         Text = currentText,
-        TextSize = 11,
+        TextSize = 12,
         Font = UI_FONT_MEDIUM,
         ZIndex = zBase + 2,
     })
@@ -1301,7 +1485,7 @@ local function openDropdown(anchorButton, arrow, values, onSelected)
             BorderSizePixel = 0,
             Text = item,
             Font = UI_FONT_MEDIUM,
-            TextSize = 11,
+            TextSize = 12,
             TextXAlignment = Enum.TextXAlignment.Left,
             AutoButtonColor = false,
             ZIndex = zBase + 1,
@@ -1355,27 +1539,27 @@ end
 local function makeDropdown(parent, y, titleText, valueText, values, onSelected)
     local holder = new("Frame", {
         Position = UDim2.fromOffset(0, y),
-        Size = UDim2.new(1, 0, 0, 57),
+        Size = UDim2.new(1, 0, 0, 47),
         BackgroundTransparency = 1,
     }, parent)
 
     local title = label(holder, {
-        Position = UDim2.fromOffset(10, 2),
-        Size = UDim2.new(1, -20, 0, 18),
+        Position = UDim2.fromOffset(10, 1),
+        Size = UDim2.new(1, -20, 0, 16),
         Text = titleText,
-        TextSize = 11,
+        TextSize = 12,
     })
     themeObject(title, "TextColor3", "label")
 
     local field = new("TextButton", {
-        Position = UDim2.fromOffset(8, 25),
-        Size = UDim2.new(1, -16, 0, 27),
+        Position = UDim2.fromOffset(8, 20),
+        Size = UDim2.new(1, -16, 0, 23),
         BorderSizePixel = 0,
         Text = "",
         AutoButtonColor = false,
         ZIndex = 6,
     }, holder)
-    round(field, 8)
+    round(field, 6)
     themeObject(field, "BackgroundColor3", "field")
     local fs = stroke(field, THEMES[activeThemeName].stroke, 1, 0.15)
     themeObject(fs, "Color", "stroke")
@@ -1386,7 +1570,7 @@ local function makeDropdown(parent, y, titleText, valueText, values, onSelected)
         Position = UDim2.fromOffset(9, 0),
         Size = UDim2.new(1, -32, 1, 0),
         Text = valueText,
-        TextSize = 11,
+        TextSize = 12,
         Font = UI_FONT_MEDIUM,
         ZIndex = 7,
     })
@@ -1439,14 +1623,14 @@ local function addToggleRow(panel, y, textValue, withDots, onDots, initialState,
     local control
 
     if withDots then
-        makeDots(row, 199, 9, onDots)
-        control = makeToggle(row, 233, 9, initialState == nil and true or initialState, onChanged)
+        makeDots(row, 199, 7, onDots)
+        control = makeToggle(row, 234, 8, initialState == nil and true or initialState, onChanged)
     else
-        control = makeToggle(row, 233, 9, initialState == true, onChanged)
+        control = makeToggle(row, 234, 8, initialState == true, onChanged)
     end
 
     if not isLast then
-        separator(panel, y + 35)
+        separator(panel, y + 31)
     end
 
     return control
@@ -1473,7 +1657,7 @@ local function hexToColor(text)
     )
 end
 
-local function openColorPicker(anchorButton, onApplied, initialColor)
+local function openColorPicker(anchorButton, onApplied, initialColor, referenceFrame)
     if activeColorPicker and activeColorPickerButton == anchorButton then
         closeColorPicker()
         return
@@ -1481,8 +1665,9 @@ local function openColorPicker(anchorButton, onApplied, initialColor)
 
     closeColorPicker()
 
-    local width = 196
-    local height = 282
+    local leftWidth = 184
+    local width = 464
+    local height = 360
     local picker = new("Frame", {
         Size = UDim2.fromOffset(width, 0),
         BackgroundColor3 = THEMES[activeThemeName].popup,
@@ -1491,11 +1676,13 @@ local function openColorPicker(anchorButton, onApplied, initialColor)
         Active = true,
         ZIndex = 1500,
     }, Overlay)
-    round(picker, 11)
-    stroke(picker, THEMES[activeThemeName].strokeStrong, 1, 0.05)
+    scalePopup(picker)
+    round(picker, 9)
     capturePopupSurface(picker, 1500)
 
-    if activeSubmenu and activeSubmenu.Parent then
+    if referenceFrame and referenceFrame.Parent then
+        picker.Position = popupPositionNextTo(referenceFrame, width, height, true)
+    elseif activeSubmenu and activeSubmenu.Parent then
         local preferRight = activeSubmenu.AbsolutePosition.X < (App.AbsolutePosition.X + App.AbsoluteSize.X * 0.5)
         picker.Position = popupPositionNextTo(activeSubmenu, width, height, preferRight)
     elseif activePopup and activePopup.Parent then
@@ -1506,8 +1693,8 @@ local function openColorPicker(anchorButton, onApplied, initialColor)
     end
 
     local title = label(picker, {
-        Position = UDim2.fromOffset(10, 5),
-        Size = UDim2.fromOffset(90, 18),
+        Position = UDim2.fromOffset(10, 4),
+        Size = UDim2.fromOffset(90, 20),
         Text = "Color",
         TextSize = 10,
         ZIndex = 1501,
@@ -1516,25 +1703,27 @@ local function openColorPicker(anchorButton, onApplied, initialColor)
 
     local x = new("TextButton", {
         AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -6, 0, 3),
-        Size = UDim2.fromOffset(20, 20),
+        Position = UDim2.new(1, -4, 0, 1),
+        Size = UDim2.fromOffset(28, 28),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Text = "×",
         Font = UI_FONT_MEDIUM,
-        TextSize = 14,
+        TextSize = 20,
         AutoButtonColor = false,
         ZIndex = 1502,
     }, picker)
-    x.TextColor3 = THEMES[activeThemeName].muted
+    themeObject(x, "TextColor3", "label")
     x.MouseButton1Click:Connect(closeColorPicker)
 
     initialColor = initialColor or Accent
+    local hue, saturation, brightness = initialColor:ToHSV()
+    local selectedColor = initialColor
     local wheelImage = resolveColorWheelAsset()
     local wheel = new("ImageLabel", {
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 28),
-        Size = UDim2.fromOffset(130, 130),
+        Position = UDim2.fromOffset(leftWidth * 0.5, 26),
+        Size = UDim2.fromOffset(122, 122),
         BackgroundTransparency = wheelImage and 1 or 0,
         BackgroundColor3 = initialColor,
         BorderSizePixel = 0,
@@ -1544,40 +1733,74 @@ local function openColorPicker(anchorButton, onApplied, initialColor)
     }, picker)
     round(wheel, 999)
 
-    local selector = new("Frame", {
-        Position = UDim2.fromOffset(56, 44),
-        Size = UDim2.fromOffset(12, 12),
+    local selector = new("TextButton", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(10, 10),
         BackgroundColor3 = Color3.fromRGB(255, 255, 255),
         BorderSizePixel = 0,
-        ZIndex = 1503,
-    }, picker)
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 1506,
+    }, wheel)
     round(selector, 999)
     stroke(selector, Color3.fromRGB(90, 94, 102), 1, 0)
 
+    local preview = new("Frame", {
+        Position = UDim2.fromOffset(leftWidth - 36, 7),
+        Size = UDim2.fromOffset(16, 16),
+        BackgroundColor3 = selectedColor,
+        BorderSizePixel = 0,
+        Visible = true,
+        ZIndex = 1505,
+    }, picker)
+    round(preview, 999)
+
+    local hex
+    local apply
+    local saturationGradient
+    local brightnessGradient
+    local hueThumb
+    local saturationThumb
+    local brightnessThumb
+    local draggingUpdater
+
     local function colorBar(y, gradientColors)
         local bar = new("Frame", {
-            Position = UDim2.fromOffset(13, y),
-            Size = UDim2.fromOffset(width - 26, 7),
+            Position = UDim2.fromOffset(12, y),
+            Size = UDim2.fromOffset(leftWidth - 24, 5),
             BackgroundColor3 = Color3.fromRGB(255, 255, 255),
             BorderSizePixel = 0,
             ZIndex = 1501,
         }, picker)
         round(bar, 999)
-        new("UIGradient", {Color = gradientColors}, bar)
+        local gradient = new("UIGradient", {Color = gradientColors}, bar)
 
         local thumb = new("Frame", {
             AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(0.82, 0, 0.5, 0),
-            Size = UDim2.fromOffset(10, 14),
-            BackgroundColor3 = Color3.fromRGB(15, 15, 17),
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.fromOffset(8, 12),
+            BackgroundColor3 = THEMES[activeThemeName].text,
             BorderSizePixel = 0,
             ZIndex = 1503,
         }, bar)
         round(thumb, 999)
-        stroke(thumb, Color3.fromRGB(255, 255, 255), 1, 0.05)
+        themeObject(thumb, "BackgroundColor3", "text")
+
+        local hit = new("TextButton", {
+            Position = UDim2.fromOffset(-3, -7),
+            Size = UDim2.new(1, 6, 0, 19),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 1504,
+        }, bar)
+
+        return bar, thumb, gradient, hit
     end
 
-    colorBar(171, ColorSequence.new({
+    local hueBar, hueBarThumb, hueBarGradient, hueHit = colorBar(158, ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
         ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
         ColorSequenceKeypoint.new(0.34, Color3.fromRGB(0, 255, 0)),
@@ -1586,18 +1809,17 @@ local function openColorPicker(anchorButton, onApplied, initialColor)
         ColorSequenceKeypoint.new(0.84, Color3.fromRGB(255, 0, 255)),
         ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0)),
     }))
-    colorBar(189, ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-        ColorSequenceKeypoint.new(1, Accent),
-    }))
-    colorBar(207, ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)),
-        ColorSequenceKeypoint.new(1, Accent),
-    }))
+    local saturationBar, saturationBarThumb, saturationBarGradient, saturationHit = colorBar(177, ColorSequence.new(Color3.new(1, 1, 1), initialColor))
+    local brightnessBar, brightnessBarThumb, brightnessBarGradient, brightnessHit = colorBar(196, ColorSequence.new(Color3.new(0, 0, 0), initialColor))
+    saturationGradient = saturationBarGradient
+    brightnessGradient = brightnessBarGradient
+    hueThumb = hueBarThumb
+    saturationThumb = saturationBarThumb
+    brightnessThumb = brightnessBarThumb
 
-    local hex = new("TextBox", {
-        Position = UDim2.fromOffset(10, 230),
-        Size = UDim2.fromOffset(105, 27),
+    hex = new("TextBox", {
+        Position = UDim2.fromOffset(10, 219),
+        Size = UDim2.fromOffset(99, 27),
         BackgroundColor3 = THEMES[activeThemeName].field,
         BorderSizePixel = 0,
         Text = colorToHex(initialColor),
@@ -1611,10 +1833,10 @@ local function openColorPicker(anchorButton, onApplied, initialColor)
     new("UIPadding", {PaddingLeft = UDim.new(0, 8)}, hex)
     hex.TextColor3 = THEMES[activeThemeName].text
 
-    local apply = new("TextButton", {
-        Position = UDim2.fromOffset(121, 230),
-        Size = UDim2.fromOffset(65, 27),
-        BackgroundColor3 = Accent,
+    apply = new("TextButton", {
+        Position = UDim2.fromOffset(115, 219),
+        Size = UDim2.fromOffset(59, 27),
+        BackgroundColor3 = selectedColor,
         BorderSizePixel = 0,
         Text = "Apply",
         TextColor3 = Color3.fromRGB(255,255,255),
@@ -1624,51 +1846,786 @@ local function openColorPicker(anchorButton, onApplied, initialColor)
         ZIndex = 1501,
     }, picker)
     round(apply, 7)
-    apply.MouseEnter:Connect(function()
-        tween(apply, 0.08, {BackgroundColor3 = Accent:Lerp(Color3.new(1,1,1), 0.10)})
-    end)
-    apply.MouseLeave:Connect(function()
-        tween(apply, 0.08, {BackgroundColor3 = Accent})
-    end)
-    apply.MouseButton1Click:Connect(function()
-        local selectedColor = hexToColor(hex.Text)
-        if selectedColor then
-            hex.Text = colorToHex(selectedColor)
-            if onApplied then
-                task.spawn(onApplied, selectedColor)
+
+    local function syncControls()
+        selectedColor = Color3.fromHSV(hue, saturation, brightness)
+        -- The bundled wheel runs counter-clockwise from red on its right edge.
+        local angle = -hue * math.pi * 2
+        local selectorX = 0.5 + math.cos(angle) * saturation * 0.46
+        local selectorY = 0.5 + math.sin(angle) * saturation * 0.46
+        selector.Position = UDim2.fromScale(selectorX, selectorY)
+        preview.BackgroundColor3 = selectedColor
+        hueThumb.Position = UDim2.new(hue, 0, 0.5, 0)
+        saturationThumb.Position = UDim2.new(saturation, 0, 0.5, 0)
+        brightnessThumb.Position = UDim2.new(brightness, 0, 0.5, 0)
+        saturationGradient.Color = ColorSequence.new(
+            Color3.fromHSV(hue, 0, brightness),
+            Color3.fromHSV(hue, 1, brightness)
+        )
+        brightnessGradient.Color = ColorSequence.new(
+            Color3.new(0, 0, 0),
+            Color3.fromHSV(hue, saturation, 1)
+        )
+        hex.Text = colorToHex(selectedColor)
+        apply.BackgroundColor3 = selectedColor
+        local luminance = selectedColor.R * 0.299 + selectedColor.G * 0.587 + selectedColor.B * 0.114
+        apply.TextColor3 = luminance > 0.68 and Color3.fromRGB(25, 26, 30) or Color3.fromRGB(255, 255, 255)
+    end
+
+    local function alphaFromBar(bar, xPosition)
+        return math.clamp((xPosition - bar.AbsolutePosition.X) / math.max(1, bar.AbsoluteSize.X), 0, 1)
+    end
+
+    local function setFromWheel(position)
+        local center = wheel.AbsolutePosition + (wheel.AbsoluteSize * 0.5)
+        local delta = Vector2.new(position.X, position.Y) - center
+        local radius = math.max(1, wheel.AbsoluteSize.X * 0.5)
+        saturation = math.clamp(delta.Magnitude / radius, 0, 1)
+        hue = (-math.atan2(delta.Y, delta.X) / (math.pi * 2)) % 1
+        syncControls()
+    end
+
+    local wheelHit = new("TextButton", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 1504,
+    }, wheel)
+
+    local function beginDrag(hit, updater)
+        hit.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                draggingUpdater = updater
+                updater(input.Position)
             end
-            closeColorPicker()
+        end)
+    end
+
+    beginDrag(wheelHit, setFromWheel)
+    beginDrag(selector, setFromWheel)
+    beginDrag(hueHit, function(position)
+        hue = alphaFromBar(hueBar, position.X)
+        syncControls()
+    end)
+    beginDrag(saturationHit, function(position)
+        saturation = alphaFromBar(saturationBar, position.X)
+        syncControls()
+    end)
+    beginDrag(brightnessHit, function(position)
+        brightness = alphaFromBar(brightnessBar, position.X)
+        syncControls()
+    end)
+
+    local divider = new("Frame", {
+        Position = UDim2.fromOffset(leftWidth + 4, 8),
+        Size = UDim2.new(0, 1, 1, -16),
+        BorderSizePixel = 0,
+        ZIndex = 1501,
+    }, picker)
+    themeObject(divider, "BackgroundColor3", "stroke")
+
+    local editor = new("Frame", {
+        Position = UDim2.fromOffset(leftWidth + 10, 0),
+        Size = UDim2.fromOffset(width - leftWidth - 20, height),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ZIndex = 1501,
+    }, picker)
+
+    local animationTitle = label(editor, {
+        Position = UDim2.fromOffset(4, 4),
+        Size = UDim2.new(1, -8, 0, 20),
+        Text = "Color animation",
+        TextSize = 11,
+        Font = UI_FONT_MEDIUM,
+        ZIndex = 1502,
+    })
+    themeObject(animationTitle, "TextColor3", "text")
+
+    local animationMode = "Custom"
+    local modeButtons = {}
+    local modeHolder = new("Frame", {
+        Position = UDim2.fromOffset(4, 28),
+        Size = UDim2.new(1, -8, 0, 23),
+        BackgroundColor3 = THEMES[activeThemeName].field,
+        BorderSizePixel = 0,
+        ZIndex = 1502,
+    }, editor)
+    round(modeHolder, 6)
+    themeObject(modeHolder, "BackgroundColor3", "field")
+
+    local function refreshAnimationMode()
+        for name, button in pairs(modeButtons) do
+            local selected = name == animationMode
+            button.BackgroundTransparency = selected and 0 or 1
+            button.BackgroundColor3 = selected and Accent or THEMES[activeThemeName].field
+            button.TextColor3 = selected and Color3.fromRGB(255, 255, 255) or THEMES[activeThemeName].label
+        end
+    end
+
+    for index, name in ipairs({"Custom", "Rainbow"}) do
+        local button = new("TextButton", {
+            Position = UDim2.new((index - 1) * 0.5, 2, 0, 2),
+            Size = UDim2.new(0.5, -4, 1, -4),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Text = name,
+            Font = UI_FONT_MEDIUM,
+            TextSize = 10,
+            AutoButtonColor = false,
+            ZIndex = 1503,
+        }, modeHolder)
+        round(button, 5)
+        modeButtons[name] = button
+        button.MouseButton1Click:Connect(function()
+            animationMode = name
+            refreshAnimationMode()
+        end)
+    end
+    refreshAnimationMode()
+
+    local presetsLabel = label(editor, {
+        Position = UDim2.fromOffset(4, 55),
+        Size = UDim2.new(1, -8, 0, 16),
+        Text = "Animated presets",
+        TextSize = 10,
+        ZIndex = 1502,
+    })
+    themeObject(presetsLabel, "TextColor3", "label")
+
+    local presetPalettes = {
+        {Color3.fromRGB(255, 76, 124), Color3.fromRGB(255, 224, 92), Color3.fromRGB(84, 218, 255), Color3.fromRGB(177, 104, 255)},
+        {Color3.fromRGB(255, 102, 82), Color3.fromRGB(255, 181, 92), Color3.fromRGB(255, 82, 151)},
+        {Color3.fromRGB(80, 226, 232), Color3.fromRGB(70, 149, 255), Color3.fromRGB(142, 91, 235)},
+    }
+    local animationSpeed = 0.35
+    local customColors = {initialColor, initialColor:Lerp(Color3.new(1, 1, 1), 0.35)}
+    local customDots = {}
+    for index, palette in ipairs(presetPalettes) do
+        local preset = new("TextButton", {
+            Position = UDim2.fromOffset(4 + (index - 1) * 84, 73),
+            Size = UDim2.fromOffset(76, 20),
+            BackgroundColor3 = palette[1],
+            BorderSizePixel = 0,
+            Text = index == 1 and "Rainbow" or (index == 2 and "Sunset" or "Water"),
+            TextColor3 = Color3.fromRGB(255, 255, 255),
+            Font = UI_FONT_MEDIUM,
+            TextSize = 9,
+            AutoButtonColor = false,
+            ZIndex = 1502,
+        }, editor)
+        round(preset, 6)
+        preset.MouseButton1Click:Connect(function()
+            animationMode = index == 1 and "Rainbow" or "Custom"
+            customColors[1] = palette[1]
+            customColors[2] = palette[2]
+            for dotIndex, dot in ipairs(customDots) do
+                dot.BackgroundColor3 = customColors[dotIndex]
+            end
+            refreshAnimationMode()
+        end)
+        task.spawn(function()
+            local colorIndex = 1
+            while preset.Parent do
+                colorIndex = colorIndex % #palette + 1
+                local transitionTime = 0.35 + (1 - animationSpeed) * 1.65
+                local animation = tween(preset, transitionTime, {BackgroundColor3 = palette[colorIndex]})
+                animation.Completed:Wait()
+            end
+        end)
+    end
+
+    local customLabel = label(editor, {
+        Position = UDim2.fromOffset(4, 99),
+        Size = UDim2.fromOffset(118, 20),
+        Text = "Custom colors · click to set",
+        TextSize = 9,
+        ZIndex = 1502,
+    })
+    themeObject(customLabel, "TextColor3", "label")
+    for index = 1, 2 do
+        local dot = new("TextButton", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(1, -14 - ((2 - index) * 24), 0, 109),
+            Size = UDim2.fromOffset(16, 16),
+            BackgroundColor3 = customColors[index],
+            BorderSizePixel = 0,
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 1503,
+        }, editor)
+        round(dot, 999)
+        customDots[index] = dot
+        dot.MouseButton1Click:Connect(function()
+            customColors[index] = selectedColor
+            dot.BackgroundColor3 = selectedColor
+            animationMode = "Custom"
+            refreshAnimationMode()
+        end)
+    end
+
+    local function makeEditorSlider(parent, y, titleText, initialAlpha, formatter, callback)
+        local titleLabel = label(parent, {
+            Position = UDim2.fromOffset(4, y),
+            Size = UDim2.fromOffset(78, 24),
+            Text = titleText,
+            TextSize = 10,
+            ZIndex = 1502,
+        })
+        themeObject(titleLabel, "TextColor3", "label")
+        local valueLabel = label(parent, {
+            Position = UDim2.new(1, -42, 0, y),
+            Size = UDim2.fromOffset(38, 24),
+            Text = "",
+            TextSize = 9,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 1502,
+        })
+        themeObject(valueLabel, "TextColor3", "text")
+        local bar = new("Frame", {
+            Position = UDim2.fromOffset(82, y + 11),
+            Size = UDim2.new(1, -128, 0, 3),
+            BorderSizePixel = 0,
+            ZIndex = 1502,
+        }, parent)
+        round(bar, 999)
+        themeObject(bar, "BackgroundColor3", "track")
+        local fill = new("Frame", {
+            Size = UDim2.new(initialAlpha, 0, 1, 0),
+            BackgroundColor3 = Accent,
+            BorderSizePixel = 0,
+            ZIndex = 1503,
+        }, bar)
+        round(fill, 999)
+        accentObject(fill, "BackgroundColor3")
+        local thumb = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(initialAlpha, 0, 0.5, 0),
+            Size = UDim2.fromOffset(8, 8),
+            BorderSizePixel = 0,
+            ZIndex = 1504,
+        }, bar)
+        round(thumb, 999)
+        themeObject(thumb, "BackgroundColor3", "knob")
+        local hit = new("TextButton", {
+            Position = UDim2.fromOffset(-3, -7),
+            Size = UDim2.new(1, 6, 0, 17),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Text = "",
+            ZIndex = 1505,
+        }, bar)
+        local currentAlpha = initialAlpha
+        local function set(nextAlpha, emit)
+            currentAlpha = math.clamp(nextAlpha, 0, 1)
+            fill.Size = UDim2.new(currentAlpha, 0, 1, 0)
+            thumb.Position = UDim2.new(currentAlpha, 0, 0.5, 0)
+            valueLabel.Text = formatter(currentAlpha)
+            if emit and callback then
+                callback(currentAlpha)
+            end
+        end
+        beginDrag(hit, function(position)
+            set(alphaFromBar(bar, position.X), true)
+        end)
+        set(initialAlpha, false)
+        return set
+    end
+
+    local setEditorBrightness = makeEditorSlider(editor, 124, "Brightness", brightness, function(a)
+        return tostring(math.floor(a * 100 + 0.5)) .. "%"
+    end, function(a)
+        brightness = a
+        syncControls()
+    end)
+    local setAnimationSpeed = makeEditorSlider(editor, 150, "Speed", animationSpeed, function(a)
+        return string.format("%.1fx", 0.25 + a * 2.75)
+    end, function(a)
+        animationSpeed = a
+    end)
+
+    local targetDivider = new("Frame", {
+        Position = UDim2.fromOffset(4, 181),
+        Size = UDim2.new(1, -8, 0, 1),
+        BorderSizePixel = 0,
+        ZIndex = 1501,
+    }, editor)
+    themeObject(targetDivider, "BackgroundColor3", "stroke")
+
+    local targetSetters = {}
+    local targetDots = {}
+    local targetSettings = {}
+    local function makeTargetCard(xPosition, name, defaultColor, hasThickness)
+        local state = {
+            Color = defaultColor,
+            Opacity = name == "Fill" and 0.35 or 1,
+            Thickness = hasThickness and 0.25 or nil,
+        }
+        targetSettings[name] = state
+        local card = new("Frame", {
+            Position = UDim2.fromOffset(xPosition, 190),
+            Size = UDim2.fromOffset(82, 119),
+            BackgroundColor3 = THEMES[activeThemeName].field,
+            BorderSizePixel = 0,
+            ZIndex = 1501,
+        }, editor)
+        round(card, 7)
+        themeObject(card, "BackgroundColor3", "field")
+        local cardTitle = label(card, {
+            Position = UDim2.fromOffset(6, 3),
+            Size = UDim2.new(1, -12, 0, 18),
+            Text = name,
+            TextSize = 9,
+            Font = UI_FONT_BOLD,
+            ZIndex = 1502,
+        })
+        themeObject(cardTitle, "TextColor3", "label")
+        local colorDot = new("TextButton", {
+            Position = UDim2.fromOffset(6, 24),
+            Size = UDim2.fromOffset(16, 16),
+            BackgroundColor3 = defaultColor,
+            BorderSizePixel = 0,
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 1503,
+        }, card)
+        round(colorDot, 999)
+        targetDots[#targetDots + 1] = {dot = colorDot, color = defaultColor, state = state}
+        colorDot.MouseButton1Click:Connect(function()
+            colorDot.BackgroundColor3 = selectedColor
+            state.Color = selectedColor
+        end)
+
+        local function cardSlider(y, textValue, initialAlpha, stateKey)
+            local cardLabel = label(card, {
+                Position = UDim2.fromOffset(6, y),
+                Size = UDim2.new(1, -12, 0, 14),
+                Text = textValue,
+                TextSize = 8,
+                ZIndex = 1502,
+            })
+            themeObject(cardLabel, "TextColor3", "muted")
+            local bar = new("Frame", {
+                Position = UDim2.fromOffset(6, y + 16),
+                Size = UDim2.new(1, -12, 0, 3),
+                BorderSizePixel = 0,
+                ZIndex = 1502,
+            }, card)
+            round(bar, 999)
+            themeObject(bar, "BackgroundColor3", "track")
+            local fill = new("Frame", {
+                Size = UDim2.new(initialAlpha, 0, 1, 0),
+                BackgroundColor3 = Accent,
+                BorderSizePixel = 0,
+                ZIndex = 1503,
+            }, bar)
+            round(fill, 999)
+            accentObject(fill, "BackgroundColor3")
+            local thumb = new("Frame", {
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.new(initialAlpha, 0, 0.5, 0),
+                Size = UDim2.fromOffset(7, 7),
+                BorderSizePixel = 0,
+                ZIndex = 1504,
+            }, bar)
+            round(thumb, 999)
+            themeObject(thumb, "BackgroundColor3", "knob")
+            local hit = new("TextButton", {
+                Position = UDim2.fromOffset(-2, -6),
+                Size = UDim2.new(1, 4, 0, 15),
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                Text = "",
+                ZIndex = 1505,
+            }, bar)
+            local function set(a)
+                a = math.clamp(a, 0, 1)
+                fill.Size = UDim2.new(a, 0, 1, 0)
+                thumb.Position = UDim2.new(a, 0, 0.5, 0)
+                state[stateKey] = a
+            end
+            beginDrag(hit, function(position)
+                set(alphaFromBar(bar, position.X))
+            end)
+            set(initialAlpha)
+            targetSetters[#targetSetters + 1] = {set = set, initial = initialAlpha}
+        end
+        cardSlider(46, "Opacity", name == "Fill" and 0.35 or 1, "Opacity")
+        if hasThickness then
+            cardSlider(78, "Thickness", 0.25, "Thickness")
+        end
+    end
+
+    makeTargetCard(4, "FOV", initialColor, true)
+    makeTargetCard(89, "Fill", initialColor, false)
+    makeTargetCard(174, "Outline", Color3.new(1, 1, 1), true)
+
+    local resetAll = new("TextButton", {
+        Position = UDim2.fromOffset(4, 320),
+        Size = UDim2.new(1, -8, 0, 25),
+        BackgroundColor3 = THEMES[activeThemeName].field,
+        BorderSizePixel = 0,
+        Text = "↻  Reset all color settings",
+        Font = UI_FONT_MEDIUM,
+        TextSize = 10,
+        AutoButtonColor = false,
+        ZIndex = 1502,
+    }, editor)
+    round(resetAll, 6)
+    themeObject(resetAll, "BackgroundColor3", "field")
+    themeObject(resetAll, "TextColor3", "label")
+    resetAll.MouseButton1Click:Connect(function()
+        hue, saturation, brightness = initialColor:ToHSV()
+        animationMode = "Custom"
+        customColors[1] = initialColor
+        customColors[2] = initialColor:Lerp(Color3.new(1, 1, 1), 0.35)
+        for index, dot in ipairs(customDots) do
+            dot.BackgroundColor3 = customColors[index]
+        end
+        for _, info in ipairs(targetDots) do
+            info.dot.BackgroundColor3 = info.color
+            info.state.Color = info.color
+        end
+        setEditorBrightness(brightness, false)
+        setAnimationSpeed(0.35, false)
+        for _, slider in ipairs(targetSetters) do
+            slider.set(slider.initial)
+        end
+        refreshAnimationMode()
+        syncControls()
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingUpdater and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            draggingUpdater(input.Position)
         end
     end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            draggingUpdater = nil
+        end
+    end)
+
+    local function applyTypedHex()
+        local typedColor = hexToColor(hex.Text)
+        if typedColor then
+            hue, saturation, brightness = typedColor:ToHSV()
+            syncControls()
+        else
+            hex.Text = colorToHex(selectedColor)
+        end
+    end
+    hex.FocusLost:Connect(applyTypedHex)
+
+    apply.MouseEnter:Connect(function()
+        tween(apply, 0.08, {BackgroundColor3 = selectedColor:Lerp(Color3.new(1,1,1), 0.10)})
+    end)
+    apply.MouseLeave:Connect(function()
+        tween(apply, 0.08, {BackgroundColor3 = selectedColor})
+    end)
+    apply.MouseButton1Click:Connect(function()
+        applyTypedHex()
+        if onApplied then
+            task.spawn(onApplied, selectedColor, {
+                Mode = animationMode,
+                Colors = {customColors[1], customColors[2]},
+                Brightness = brightness,
+                Speed = 0.25 + animationSpeed * 2.75,
+                Targets = targetSettings,
+            })
+        end
+        closeColorPicker()
+    end)
+
+    syncControls()
 
     activeColorPicker = picker
     activeColorPickerButton = anchorButton
     tween(picker, 0.13, {Size = UDim2.fromOffset(width, height)})
 end
 
+-- Minimal picker used by inline customization rows. It intentionally avoids
+-- the animation/control dashboard from the old advanced-popup experiment.
+local function openInlineColorPicker(anchorButton, initialColor, onSaved)
+    if activeColorPicker and activeColorPickerButton == anchorButton then
+        closeColorPicker()
+        return
+    end
+
+    closeColorPicker()
+    local width = 190
+    local height = 239
+    local picker = new("Frame", {
+        Size = UDim2.fromOffset(width, 0),
+        BackgroundColor3 = THEMES[activeThemeName].popup,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        Active = true,
+        ZIndex = 1500,
+    }, Overlay)
+    scalePopup(picker)
+    round(picker, 9)
+    capturePopupSurface(picker, 1500)
+    picker.Position = popupPositionOutsideChain(anchorButton, width, height)
+
+    local title = label(picker, {
+        Position = UDim2.fromOffset(10, 4),
+        Size = UDim2.fromOffset(80, 21),
+        Text = "Color",
+        TextSize = 11,
+        Font = UI_FONT_MEDIUM,
+        ZIndex = 1501,
+    })
+    themeObject(title, "TextColor3", "text")
+
+    initialColor = initialColor or Accent
+    local hue, saturation, brightness = initialColor:ToHSV()
+    local selectedColor = initialColor
+    local preview = new("Frame", {
+        Position = UDim2.fromOffset(147, 7),
+        Size = UDim2.fromOffset(15, 15),
+        BackgroundColor3 = selectedColor,
+        BorderSizePixel = 0,
+        ZIndex = 1503,
+    }, picker)
+    round(preview, 999)
+
+    local close = new("TextButton", {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -3, 0, 0),
+        Size = UDim2.fromOffset(27, 27),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Text = "×",
+        Font = UI_FONT_MEDIUM,
+        TextSize = 19,
+        AutoButtonColor = false,
+        ZIndex = 1504,
+    }, picker)
+    themeObject(close, "TextColor3", "label")
+    close.MouseButton1Click:Connect(closeColorPicker)
+
+    local wheelImage = resolveColorWheelAsset()
+    local wheel = new("ImageLabel", {
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, 28),
+        Size = UDim2.fromOffset(120, 120),
+        BackgroundTransparency = wheelImage and 1 or 0,
+        BackgroundColor3 = selectedColor,
+        BorderSizePixel = 0,
+        Image = wheelImage or "",
+        ScaleType = Enum.ScaleType.Fit,
+        ZIndex = 1501,
+    }, picker)
+    round(wheel, 999)
+
+    local selector = new("TextButton", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Size = UDim2.fromOffset(10, 10),
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BorderSizePixel = 0,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 1505,
+    }, wheel)
+    round(selector, 999)
+    stroke(selector, Color3.fromRGB(68, 70, 76), 1, 0)
+
+    local wheelHit = new("TextButton", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 1504,
+    }, wheel)
+
+    local brightnessBar = new("Frame", {
+        Position = UDim2.fromOffset(12, 159),
+        Size = UDim2.new(1, -24, 0, 5),
+        BackgroundColor3 = Color3.fromHSV(hue, saturation, 1),
+        BorderSizePixel = 0,
+        ZIndex = 1501,
+    }, picker)
+    round(brightnessBar, 999)
+    local brightnessGradient = new("UIGradient", {
+        Color = ColorSequence.new(Color3.new(0, 0, 0), Color3.fromHSV(hue, saturation, 1)),
+    }, brightnessBar)
+    local brightnessThumb = new("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Size = UDim2.fromOffset(8, 12),
+        BorderSizePixel = 0,
+        ZIndex = 1503,
+    }, brightnessBar)
+    round(brightnessThumb, 999)
+    themeObject(brightnessThumb, "BackgroundColor3", "text")
+    local brightnessHit = new("TextButton", {
+        Position = UDim2.fromOffset(-3, -7),
+        Size = UDim2.new(1, 6, 0, 19),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Text = "",
+        ZIndex = 1504,
+    }, brightnessBar)
+
+    local hex = new("TextBox", {
+        Position = UDim2.fromOffset(10, 176),
+        Size = UDim2.new(1, -20, 0, 25),
+        BackgroundColor3 = THEMES[activeThemeName].field,
+        BorderSizePixel = 0,
+        Text = colorToHex(selectedColor),
+        ClearTextOnFocus = false,
+        Font = UI_FONT_MEDIUM,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 1502,
+    }, picker)
+    round(hex, 6)
+    new("UIPadding", {PaddingLeft = UDim.new(0, 8)}, hex)
+    themeObject(hex, "BackgroundColor3", "field")
+    themeObject(hex, "TextColor3", "text")
+
+    local dragging
+    local function sync()
+        selectedColor = Color3.fromHSV(hue, saturation, brightness)
+        local angle = -hue * math.pi * 2
+        selector.Position = UDim2.fromScale(
+            0.5 + math.cos(angle) * saturation * 0.46,
+            0.5 + math.sin(angle) * saturation * 0.46
+        )
+        brightnessThumb.Position = UDim2.new(brightness, 0, 0.5, 0)
+        brightnessGradient.Color = ColorSequence.new(
+            Color3.new(0, 0, 0),
+            Color3.fromHSV(hue, saturation, 1)
+        )
+        preview.BackgroundColor3 = selectedColor
+        hex.Text = colorToHex(selectedColor)
+    end
+    local function fromWheel(position)
+        local center = wheel.AbsolutePosition + wheel.AbsoluteSize * 0.5
+        local delta = Vector2.new(position.X, position.Y) - center
+        saturation = math.clamp(delta.Magnitude / math.max(1, wheel.AbsoluteSize.X * 0.5), 0, 1)
+        hue = (-math.atan2(delta.Y, delta.X) / (math.pi * 2)) % 1
+        sync()
+    end
+    local function fromBrightness(position)
+        brightness = math.clamp(
+            (position.X - brightnessBar.AbsolutePosition.X) / math.max(1, brightnessBar.AbsoluteSize.X),
+            0,
+            1
+        )
+        sync()
+    end
+    local function bindDrag(object, updater)
+        object.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = updater
+                updater(input.Position)
+            end
+        end)
+    end
+    bindDrag(wheelHit, fromWheel)
+    bindDrag(selector, fromWheel)
+    bindDrag(brightnessHit, fromBrightness)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            dragging(input.Position)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = nil
+        end
+    end)
+    hex.FocusLost:Connect(function()
+        local typed = hexToColor(hex.Text)
+        if typed then
+            hue, saturation, brightness = typed:ToHSV()
+            sync()
+        else
+            hex.Text = colorToHex(selectedColor)
+        end
+    end)
+
+    local cancel = new("TextButton", {
+        Position = UDim2.fromOffset(10, 207),
+        Size = UDim2.fromOffset(80, 25),
+        BackgroundColor3 = THEMES[activeThemeName].field,
+        BorderSizePixel = 0,
+        Text = "Cancel",
+        Font = UI_FONT_MEDIUM,
+        TextSize = 11,
+        AutoButtonColor = false,
+        ZIndex = 1502,
+    }, picker)
+    round(cancel, 6)
+    themeObject(cancel, "BackgroundColor3", "field")
+    themeObject(cancel, "TextColor3", "label")
+    cancel.MouseButton1Click:Connect(closeColorPicker)
+
+    local save = new("TextButton", {
+        Position = UDim2.fromOffset(100, 207),
+        Size = UDim2.fromOffset(80, 25),
+        BackgroundColor3 = Accent,
+        BorderSizePixel = 0,
+        Text = "Save",
+        TextColor3 = Color3.fromRGB(255, 255, 255),
+        Font = UI_FONT_MEDIUM,
+        TextSize = 11,
+        AutoButtonColor = false,
+        ZIndex = 1502,
+    }, picker)
+    round(save, 6)
+    accentObject(save, "BackgroundColor3")
+    save.MouseButton1Click:Connect(function()
+        local typed = hexToColor(hex.Text)
+        if typed then
+            selectedColor = typed
+        end
+        if onSaved then
+            task.spawn(onSaved, selectedColor)
+        end
+        closeColorPicker()
+    end)
+
+    sync()
+    activeColorPicker = picker
+    activeColorPickerButton = anchorButton
+    tween(picker, 0.13, {Size = UDim2.fromOffset(width, height)})
+    showPopupDimmer()
+end
+
 local function openSecondLevel(anchorRow, submenuConfig)
     if activeSubmenu and activeSubmenuButton == anchorRow then
         closeSubmenu()
-        return
+        return false
     end
 
     closeSubmenu()
 
     submenuConfig = submenuConfig or {}
     local controls = submenuConfig.Controls or {}
-    local width = 176
-    local height = 30
+    local width = 238
+    local ROW_HEIGHT = 28
+    local SLIDER_HEIGHT = 30
+    local SWATCHES_HEIGHT = 38
+    local GROUP_HEIGHT = 22
+    local height = 6
 
     for _, control in ipairs(controls) do
-        if control.Type == "Slider" then
-            height += 52
+        if control.Type == "Group" then
+            height += GROUP_HEIGHT
+        elseif control.Type == "Slider" then
+            height += SLIDER_HEIGHT
         elseif control.Type == "Presets" or control.Type == "Colors" then
-            height += 50
+            height += SWATCHES_HEIGHT
         else
-            height += 36
+            height += ROW_HEIGHT
         end
     end
-    height += 6
+    height += 4
 
     local menu = new("Frame", {
         Size = UDim2.fromOffset(width, 0),
@@ -1678,8 +2635,9 @@ local function openSecondLevel(anchorRow, submenuConfig)
         Active = true,
         ZIndex = 1400,
     }, Overlay)
-    round(menu, 10)
-    stroke(menu, THEMES[activeThemeName].strokeStrong, 1, 0.05)
+    scalePopup(menu)
+    round(menu, 7)
+    stroke(menu, THEMES[activeThemeName].strokeStrong, 1, 0.76)
     capturePopupSurface(menu, 1400)
 
     if activePopup and activePopup.Parent then
@@ -1689,44 +2647,210 @@ local function openSecondLevel(anchorRow, submenuConfig)
         menu.Position = popupPositionOutsideChain(anchorRow, width, height)
     end
 
-    local title = label(menu, {
-        Position = UDim2.fromOffset(10, 5),
-        Size = UDim2.new(1, -20, 0, 18),
-        Text = submenuConfig.Title or submenuConfig.Name or "Options",
-        TextSize = 10,
-        Font = UI_FONT_MEDIUM,
-        ZIndex = 1401,
-    })
-    title.TextColor3 = THEMES[activeThemeName].label
+    -- This pane deliberately uses its own dense controls. The normal page
+    -- controls are too large here and made this feel like a second full card.
+    local cursorY = 3
 
-    local cursorY = 26
+    local function compactRow(y, textValue, rowHeight)
+        local row = new("Frame", {
+            Position = UDim2.fromOffset(0, y),
+            Size = UDim2.new(1, 0, 0, rowHeight or ROW_HEIGHT),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ZIndex = 1401,
+        }, menu)
+        local title = label(row, {
+            Position = UDim2.fromOffset(10, 0),
+            Size = UDim2.new(1, -92, 1, 0),
+            Text = textValue,
+            TextSize = 10,
+            Font = UI_FONT_MEDIUM,
+            ZIndex = 1402,
+        })
+        themeObject(title, "TextColor3", "label")
+        return row, title
+    end
+
+    local function compactToggle(row, initial, callback)
+        local enabled = initial == true
+        local track = new("Frame", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -10, 0.5, 0),
+            Size = UDim2.fromOffset(20, 12),
+            BackgroundColor3 = enabled and Accent or THEMES[activeThemeName].toggleOff,
+            BorderSizePixel = 0,
+            ZIndex = 1403,
+        }, row)
+        round(track, 999)
+        local knob = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(enabled and 1 or 0, enabled and -6 or 6, 0.5, 0),
+            Size = UDim2.fromOffset(8, 8),
+            BackgroundColor3 = Color3.fromRGB(238, 240, 246),
+            BorderSizePixel = 0,
+            ZIndex = 1404,
+        }, track)
+        round(knob, 999)
+        local hit = new("TextButton", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -5, 0.5, 0),
+            Size = UDim2.fromOffset(32, 26),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 1405,
+        }, row)
+        hit.MouseButton1Click:Connect(function()
+            enabled = not enabled
+            tween(track, 0.11, {BackgroundColor3 = enabled and Accent or THEMES[activeThemeName].toggleOff})
+            tween(knob, 0.11, {Position = UDim2.new(enabled and 1 or 0, enabled and -6 or 6, 0.5, 0)})
+            if callback then
+                task.spawn(callback, enabled)
+            end
+        end)
+    end
+
+    local function compactSlider(control, y)
+        local minimum = tonumber(control.Minimum) or 0
+        local maximum = tonumber(control.Maximum) or 100
+        local current = tonumber(control.Default) or minimum
+        local suffix = control.Suffix or ""
+        local decimals = math.max(0, tonumber(control.Decimals) or 0)
+        local alpha = maximum == minimum and 0 or math.clamp((current - minimum) / (maximum - minimum), 0, 1)
+        local row, title = compactRow(y, control.Name or "Slider", SLIDER_HEIGHT)
+        title.Size = UDim2.fromOffset(94, SLIDER_HEIGHT)
+
+        local value = label(row, {
+            Position = UDim2.fromOffset(96, 0),
+            Size = UDim2.fromOffset(35, SLIDER_HEIGHT),
+            Text = "",
+            TextSize = 10,
+            Font = SLIDER_FONT,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 1402,
+        })
+        themeObject(value, "TextColor3", "text")
+
+        local track = new("Frame", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -10, 0.5, 0),
+            Size = UDim2.fromOffset(69, 3),
+            BorderSizePixel = 0,
+            ZIndex = 1402,
+        }, row)
+        round(track, 999)
+        themeObject(track, "BackgroundColor3", "track")
+        local fill = new("Frame", {
+            Size = UDim2.new(alpha, 0, 1, 0),
+            BackgroundColor3 = Accent,
+            BorderSizePixel = 0,
+            ZIndex = 1403,
+        }, track)
+        round(fill, 999)
+        accentObject(fill, "BackgroundColor3")
+        local knob = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(alpha, 0, 0.5, 0),
+            Size = UDim2.fromOffset(8, 8),
+            BorderSizePixel = 0,
+            ZIndex = 1404,
+        }, track)
+        round(knob, 999)
+        themeObject(knob, "BackgroundColor3", "knob")
+        local knobStroke = stroke(knob, THEMES[activeThemeName].knobStroke, 1, 0.08)
+        themeObject(knobStroke, "Color", "knobStroke")
+        local hit = new("TextButton", {
+            Position = UDim2.fromOffset(-3, -8),
+            Size = UDim2.new(1, 6, 0, 19),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 1405,
+        }, track)
+
+        local dragging = false
+        local function formatNumber(number)
+            if decimals == 0 then
+                return tostring(math.floor(number + 0.5)) .. suffix
+            end
+            return string.format("%." .. decimals .. "f", number) .. suffix
+        end
+        local function setAlpha(nextAlpha, emit)
+            alpha = math.clamp(nextAlpha, 0, 1)
+            current = minimum + ((maximum - minimum) * alpha)
+            control.Default = current
+            fill.Size = UDim2.new(alpha, 0, 1, 0)
+            knob.Position = UDim2.new(alpha, 0, 0.5, 0)
+            value.Text = formatNumber(current)
+            if emit and control.Callback then
+                task.spawn(control.Callback, current)
+            end
+        end
+        local function setFromX(x)
+            setAlpha((x - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), true)
+        end
+        setAlpha(alpha, false)
+        hit.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                setFromX(input.Position.X)
+            end
+        end)
+        UserInputService.InputChanged:Connect(function(input)
+            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                setFromX(input.Position.X)
+            end
+        end)
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
+            end
+        end)
+    end
 
     local function addColorControl(control, y)
-        local colorRow = makeRow(menu, y, control.Name or "Color", false)
+        local colorRow = compactRow(y, control.Name or "Color")
         local currentColor = control.Default or Accent
-        local rightInset = 9
+        local rightInset = 10
+
+        local hexValue = label(colorRow, {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, control.Reset == true and -56 or -32, 0.5, 0),
+            Size = UDim2.fromOffset(54, 18),
+            Text = colorToHex(currentColor),
+            TextSize = 9,
+            Font = SLIDER_FONT,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 1402,
+        })
+        themeObject(hexValue, "TextColor3", "text")
 
         if control.Reset == true then
             local resetButton = new("ImageButton", {
                 AnchorPoint = Vector2.new(1, 0.5),
-                Position = UDim2.new(1, -48, 0.5, 0),
-                Size = UDim2.fromOffset(17, 17),
+                Position = UDim2.new(1, -36, 0.5, 0),
+                Size = UDim2.fromOffset(14, 14),
                 BackgroundTransparency = 1,
                 BorderSizePixel = 0,
                 Image = CONSIST_RESET_ICON,
+                ImageTransparency = 0,
                 ScaleType = Enum.ScaleType.Fit,
                 ZIndex = 1404,
             }, colorRow)
-            themeObject(resetButton, "ImageColor3", "icon")
+            themeObject(resetButton, "ImageColor3", "text")
             resetButton.MouseButton1Click:Connect(function()
                 currentColor = type(control.ResetColor) == "function"
                     and control.ResetColor()
                     or control.ResetColor
                     or Accent
+                control.Default = currentColor
                 local swatch = colorRow:FindFirstChild("ColorSwatch", true)
                 if swatch then
                     swatch.BackgroundColor3 = currentColor
                 end
+                hexValue.Text = colorToHex(currentColor)
                 if control.Callback then
                     task.spawn(control.Callback, currentColor, true)
                 end
@@ -1735,29 +2859,23 @@ local function openSecondLevel(anchorRow, submenuConfig)
         end
 
         local swatchButton = new("TextButton", {
+            Name = "ColorSwatch",
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, -rightInset, 0.5, 0),
-            Size = UDim2.fromOffset(32, 20),
-            BackgroundColor3 = THEMES[activeThemeName].field,
+            Size = UDim2.fromOffset(14, 14),
+            BackgroundColor3 = currentColor,
             BorderSizePixel = 0,
             Text = "",
             AutoButtonColor = false,
             ZIndex = 1403,
         }, colorRow)
-        round(swatchButton, 7)
-        local swatch = new("Frame", {
-            Name = "ColorSwatch",
-            Position = UDim2.fromOffset(4, 4),
-            Size = UDim2.fromOffset(24, 12),
-            BackgroundColor3 = currentColor,
-            BorderSizePixel = 0,
-            ZIndex = 1404,
-        }, swatchButton)
-        round(swatch, 5)
+        round(swatchButton, 999)
         swatchButton.MouseButton1Click:Connect(function()
             openColorPicker(swatchButton, function(color)
                 currentColor = color
-                swatch.BackgroundColor3 = color
+                control.Default = color
+                swatchButton.BackgroundColor3 = color
+                hexValue.Text = colorToHex(color)
                 if control.Callback then
                     task.spawn(control.Callback, color, false)
                 end
@@ -1766,38 +2884,49 @@ local function openSecondLevel(anchorRow, submenuConfig)
     end
 
     for _, control in ipairs(controls) do
-        if control.Type == "Slider" then
-            local minimum = tonumber(control.Minimum) or 0
-            local maximum = tonumber(control.Maximum) or 100
-            local default = tonumber(control.Default) or minimum
-            local alpha = maximum == minimum and 0 or math.clamp((default - minimum) / (maximum - minimum), 0, 1)
-            makePremiumSlider(menu, cursorY, control.Name or "Slider", tostring(default), alpha, {
-                LibraryControl = true,
-                Minimum = minimum,
-                Maximum = maximum,
-                Default = default,
-                Suffix = control.Suffix or "",
-                Decimals = control.Decimals or 0,
-                Callback = control.Callback,
+        if control.Type == "Group" then
+            local groupLabel = label(menu, {
+                Position = UDim2.fromOffset(10, cursorY + 2),
+                Size = UDim2.new(1, -20, 0, 15),
+                Text = string.upper(control.Name or "SECTION"),
+                TextSize = 9,
+                Font = UI_FONT_BOLD,
+                ZIndex = 1402,
             })
-            cursorY += 52
+            themeObject(groupLabel, "TextColor3", "muted")
+            local groupLine = new("Frame", {
+                Position = UDim2.fromOffset(10, cursorY + GROUP_HEIGHT - 2),
+                Size = UDim2.new(1, -20, 0, 1),
+                BorderSizePixel = 0,
+                ZIndex = 1401,
+            }, menu)
+            themeObject(groupLine, "BackgroundColor3", "stroke")
+            cursorY += GROUP_HEIGHT
+        elseif control.Type == "Slider" then
+            compactSlider(control, cursorY)
+            cursorY += SLIDER_HEIGHT
         elseif control.Type == "Toggle" then
-            local row = makeRow(menu, cursorY, control.Name or "Toggle", false)
-            makeToggle(row, width - 26, 9, control.Default == true, control.Callback)
-            cursorY += 36
+            local row = compactRow(cursorY, control.Name or "Toggle")
+            compactToggle(row, control.Default == true, function(enabled)
+                control.Default = enabled
+                if control.Callback then
+                    control.Callback(enabled)
+                end
+            end)
+            cursorY += ROW_HEIGHT
         elseif control.Type == "Color" then
             addColorControl(control, cursorY)
-            cursorY += 36
+            cursorY += ROW_HEIGHT
         elseif control.Type == "Colors" then
             local holder = new("Frame", {
                 Position = UDim2.fromOffset(0, cursorY),
-                Size = UDim2.new(1, 0, 0, 50),
+                Size = UDim2.new(1, 0, 0, SWATCHES_HEIGHT),
                 BackgroundTransparency = 1,
                 BorderSizePixel = 0,
             }, menu)
             local colorsTitle = label(holder, {
                 Position = UDim2.fromOffset(10, 0),
-                Size = UDim2.new(1, -20, 0, 18),
+                Size = UDim2.new(1, -20, 0, 16),
                 Text = control.Name or "Custom Colors",
                 TextSize = 10,
             })
@@ -1805,15 +2934,14 @@ local function openSecondLevel(anchorRow, submenuConfig)
             local colors = control.Colors or {Accent, Color3.fromRGB(112, 206, 225), Color3.fromRGB(255, 138, 168)}
             for index = 1, math.min(3, #colors) do
                 local colorButton = new("TextButton", {
-                    Position = UDim2.fromOffset(10 + ((index - 1) * 28), 22),
-                    Size = UDim2.fromOffset(21, 21),
+                    Position = UDim2.fromOffset(10 + ((index - 1) * 23), 18),
+                    Size = UDim2.fromOffset(16, 16),
                     BackgroundColor3 = colors[index],
                     BorderSizePixel = 0,
                     Text = "",
                     AutoButtonColor = false,
                 }, holder)
                 round(colorButton, 999)
-                stroke(colorButton, THEMES[activeThemeName].strokeStrong, 1, 0.05)
                 colorButton.MouseButton1Click:Connect(function()
                     openColorPicker(colorButton, function(color)
                         colors[index] = color
@@ -1824,17 +2952,17 @@ local function openSecondLevel(anchorRow, submenuConfig)
                     end, colors[index])
                 end)
             end
-            cursorY += 50
+            cursorY += SWATCHES_HEIGHT
         elseif control.Type == "Presets" then
             local holder = new("Frame", {
                 Position = UDim2.fromOffset(0, cursorY),
-                Size = UDim2.new(1, 0, 0, 50),
+                Size = UDim2.new(1, 0, 0, SWATCHES_HEIGHT),
                 BackgroundTransparency = 1,
                 BorderSizePixel = 0,
             }, menu)
             local presetTitle = label(holder, {
                 Position = UDim2.fromOffset(10, 0),
-                Size = UDim2.new(1, -20, 0, 18),
+                Size = UDim2.new(1, -20, 0, 16),
                 Text = control.Name or "Presets",
                 TextSize = 10,
             })
@@ -1845,15 +2973,14 @@ local function openSecondLevel(anchorRow, submenuConfig)
                     break
                 end
                 local presetButton = new("TextButton", {
-                    Position = UDim2.fromOffset(10 + ((index - 1) * 32), 22),
-                    Size = UDim2.fromOffset(23, 23),
+                    Position = UDim2.fromOffset(10 + ((index - 1) * 25), 18),
+                    Size = UDim2.fromOffset(17, 17),
                     BackgroundColor3 = Color3.new(1, 1, 1),
                     BorderSizePixel = 0,
                     Text = "",
                     AutoButtonColor = false,
                 }, holder)
                 round(presetButton, 999)
-                stroke(presetButton, THEMES[activeThemeName].strokeStrong, 1, 0.05)
                 new("UIGradient", {Color = preset}, presetButton)
                 presetButton.MouseButton1Click:Connect(function()
                     if control.Callback then
@@ -1861,7 +2988,56 @@ local function openSecondLevel(anchorRow, submenuConfig)
                     end
                 end)
             end
-            cursorY += 50
+            cursorY += SWATCHES_HEIGHT
+        elseif control.Type == "Page" then
+            local pageButton = new("TextButton", {
+                Position = UDim2.fromOffset(6, cursorY + 2),
+                Size = UDim2.new(1, -12, 0, ROW_HEIGHT - 4),
+                BackgroundColor3 = THEMES[activeThemeName].field,
+                BorderSizePixel = 0,
+                Text = "",
+                AutoButtonColor = false,
+                ZIndex = 1402,
+            }, menu)
+            round(pageButton, 5)
+            themeObject(pageButton, "BackgroundColor3", "field")
+            local pageLabel = label(pageButton, {
+                Position = UDim2.fromOffset(9, 0),
+                Size = UDim2.new(1, -32, 1, 0),
+                Text = control.Name or "More settings",
+                TextSize = 9,
+                Font = UI_FONT_MEDIUM,
+                ZIndex = 1403,
+            })
+            themeObject(pageLabel, "TextColor3", "label")
+            local pageArrow = new("ImageLabel", {
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, -8, 0.5, 0),
+                Size = UDim2.fromOffset(8, 8),
+                BackgroundTransparency = 1,
+                Image = resolveHostedIcon("Chevron"),
+                Rotation = 270,
+                ScaleType = Enum.ScaleType.Fit,
+                ZIndex = 1403,
+            }, pageButton)
+            themeObject(pageArrow, "ImageColor3", "icon")
+            pageButton.MouseEnter:Connect(function()
+                tween(pageButton, 0.08, {BackgroundColor3 = THEMES[activeThemeName].fieldHover})
+            end)
+            pageButton.MouseLeave:Connect(function()
+                tween(pageButton, 0.08, {BackgroundColor3 = THEMES[activeThemeName].field})
+            end)
+            pageButton.MouseButton1Click:Connect(function()
+                local target = type(control.Target) == "function" and control.Target() or control.Target
+                if type(target) ~= "table" then
+                    return
+                end
+                closeSubmenu()
+                if openSecondLevel(anchorRow, target) then
+                    showPopupDimmer()
+                end
+            end)
+            cursorY += ROW_HEIGHT
         end
     end
 
@@ -1869,11 +3045,15 @@ local function openSecondLevel(anchorRow, submenuConfig)
         if obj:IsA("GuiObject") and obj ~= menu and obj.ZIndex < 1400 then
             obj.ZIndex = obj.ZIndex + 1400
         end
+        if obj:IsA("TextLabel") and obj.TextSize >= 13 then
+            obj.TextSize = 11
+        end
     end
 
     activeSubmenu = menu
     activeSubmenuButton = anchorRow
     tween(menu, 0.12, {Size = UDim2.fromOffset(width, height)})
+    return true
 end
 
 local function openThreeDotMenu(anchorButton, menuConfig)
@@ -1888,8 +3068,9 @@ local function openThreeDotMenu(anchorButton, menuConfig)
     menuConfig = menuConfig or {
         {Name = "Options", Controls = {}},
     }
-    local width = 176
-    local height = 10 + (#menuConfig * 34)
+    local width = 196
+    local rowHeight = 30
+    local height = 8 + (#menuConfig * rowHeight)
 
     local menu = new("Frame", {
         Size = UDim2.fromOffset(width, 0),
@@ -1899,13 +3080,27 @@ local function openThreeDotMenu(anchorButton, menuConfig)
         Active = true,
         ZIndex = 1350,
     }, Overlay)
-    round(menu, 10)
-    stroke(menu, THEMES[activeThemeName].strokeStrong, 1, 0.05)
+    scalePopup(menu)
+    round(menu, 7)
+    stroke(menu, THEMES[activeThemeName].strokeStrong, 1, 0.76)
     capturePopupSurface(menu, 1350)
     menu.Position = popupPositionBeside(anchorButton, width, height, false)
 
-    local selectedIndex = anchorButton:GetAttribute("PopupSelectedIndex") or 0
+    -- A newly opened first pane has no expanded row yet. Selection is kept
+    -- only while this pane is alive so a stale arrow never appears reversed.
+    local selectedIndex = 0
+    anchorButton:SetAttribute("PopupSelectedIndex", 0)
     local rows = {}
+    local arrows = {}
+    local menuGlyphs = {
+        Appearance = "◉",
+        Animate = "↻",
+        Targeting = "◎",
+        Movement = "◇",
+        Prediction = "⌁",
+        Visibility = "◌",
+        Conditions = "▽",
+    }
 
     local function refreshRows(hoverRow)
         for i, row in ipairs(rows) do
@@ -1914,13 +3109,16 @@ local function openThreeDotMenu(anchorButton, menuConfig)
                 row.BackgroundTransparency = selected and 0 or 1
                 row.BackgroundColor3 = selected and THEMES[activeThemeName].fieldHover or THEMES[activeThemeName].field
             end
+            if arrows[i] then
+                tween(arrows[i], 0.12, {Rotation = selected and 90 or 270})
+            end
         end
     end
 
     for index, itemConfig in ipairs(menuConfig) do
         local row = new("TextButton", {
-            Position = UDim2.fromOffset(5, 5 + (index - 1) * 34),
-            Size = UDim2.new(1, -10, 0, 31),
+            Position = UDim2.fromOffset(4, 4 + (index - 1) * rowHeight),
+            Size = UDim2.new(1, -8, 0, rowHeight - 2),
             BackgroundTransparency = index == selectedIndex and 0 or 1,
             BackgroundColor3 = index == selectedIndex and THEMES[activeThemeName].fieldHover or THEMES[activeThemeName].field,
             BorderSizePixel = 0,
@@ -1928,22 +3126,68 @@ local function openThreeDotMenu(anchorButton, menuConfig)
             AutoButtonColor = false,
             ZIndex = 1351,
         }, menu)
-        round(row, 7)
+        round(row, 5)
         rows[index] = row
 
+        local rowIcon = label(row, {
+            Position = UDim2.fromOffset(8, 0),
+            Size = UDim2.fromOffset(16, rowHeight - 2),
+            Text = itemConfig.Icon or menuGlyphs[itemConfig.Name] or "•",
+            TextSize = 11,
+            Font = UI_FONT_MEDIUM,
+            TextXAlignment = Enum.TextXAlignment.Center,
+            ZIndex = 1352,
+        })
+        rowIcon.TextColor3 = THEMES[activeThemeName].muted
+
         local rowLabel = label(row, {
-            Position = UDim2.fromOffset(10, 0),
-            Size = UDim2.new(1, -36, 1, 0),
+            Position = UDim2.fromOffset(30, 0),
+            Size = UDim2.new(1, -72, 1, 0),
             Text = itemConfig.Name or ("Option " .. tostring(index)),
             TextSize = 10,
             ZIndex = 1352,
         })
         rowLabel.TextColor3 = THEMES[activeThemeName].label
 
+        -- Keep the common color action available from the first pane. This
+        -- preserves the reference hierarchy without forcing an extra submenu
+        -- visit for a routine color adjustment.
+        local quickColor
+        for _, control in ipairs(itemConfig.Controls or {}) do
+            if control.Type == "Color" then
+                quickColor = control
+                break
+            end
+        end
+
+        if quickColor then
+            local quickColorButton = new("TextButton", {
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, -25, 0.5, 0),
+                Size = UDim2.fromOffset(13, 13),
+                BackgroundColor3 = quickColor.Default or Accent,
+                BorderSizePixel = 0,
+                Text = "",
+                AutoButtonColor = false,
+                ZIndex = 1353,
+            }, row)
+            round(quickColorButton, 999)
+
+            quickColorButton.MouseButton1Click:Connect(function()
+                openColorPicker(quickColorButton, function(color)
+                    quickColor.Default = color
+                    quickColorButton.BackgroundColor3 = color
+                    if quickColor.Callback then
+                        task.spawn(quickColor.Callback, color)
+                    end
+                end, quickColor.Default or Accent)
+            end)
+        end
+
         local arrow = new("ImageLabel", {
             AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -8, 0.5, 0),
-            Size = UDim2.fromOffset(11, 11),
+            Position = UDim2.new(1, -9, 0.5, 0),
+            Size = UDim2.fromOffset(9, 9),
             BackgroundTransparency = 1,
             Image = resolveHostedIcon("Chevron"),
             Rotation = 270,
@@ -1951,6 +3195,7 @@ local function openThreeDotMenu(anchorButton, menuConfig)
             ZIndex = 1352,
         }, row)
         arrow.ImageColor3 = THEMES[activeThemeName].icon
+        arrows[index] = arrow
 
         row.MouseEnter:Connect(function()
             tween(row, 0.08, {
@@ -1967,28 +3212,37 @@ local function openThreeDotMenu(anchorButton, menuConfig)
         end)
 
         row.MouseButton1Click:Connect(function()
-            selectedIndex = index
-            anchorButton:SetAttribute("PopupSelectedIndex", index)
+            local wasOpen = activeSubmenu and activeSubmenuButton == row
+            local opened = openSecondLevel(row, itemConfig)
+            selectedIndex = (not wasOpen and opened) and index or 0
+            anchorButton:SetAttribute("PopupSelectedIndex", selectedIndex)
             refreshRows()
-            openSecondLevel(row, itemConfig)
         end)
     end
 
     activePopup = menu
     tween(menu, 0.12, {Size = UDim2.fromOffset(width, height)})
+    showPopupDimmer()
 end
 
 
 local PageFrames = {}
 
 local function createPageFrame(pageName)
-    local frame = new("Frame", {
+    local frame = new("ScrollingFrame", {
         Name = pageName .. "Page",
         Size = UDim2.fromScale(1, 1),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Visible = false,
+        CanvasSize = UDim2.fromOffset(0, 0),
+        ScrollBarThickness = 2,
+        ScrollBarImageColor3 = THEMES[activeThemeName].muted,
+        ScrollBarImageTransparency = 0.35,
+        ScrollingDirection = Enum.ScrollingDirection.Y,
+        ElasticBehavior = Enum.ElasticBehavior.Never,
     }, Content)
+    themeObject(frame, "ScrollBarImageColor3", "muted")
     PageFrames[pageName] = frame
     return frame
 end
@@ -2004,6 +3258,9 @@ local function resizeSection(section)
 
     local layout = section.Page.Layout
     layout[section.Side] = math.max(layout[section.Side], section.Y + height + 10)
+    if section.Page.Frame:IsA("ScrollingFrame") then
+        section.Page.Frame.CanvasSize = UDim2.fromOffset(0, math.max(layout.Left, layout.Right))
+    end
 end
 
 local function reserveSectionSpace(section, height)
@@ -2018,26 +3275,14 @@ end
 
 function SectionBuilder:Toggle(options)
     options = options or {}
-    local y = reserveSectionSpace(self, 36)
-    local advanced = options.Advanced
-    local onDots
-
-    if type(advanced) == "table" then
-        onDots = function(button)
-            openThreeDotMenu(button, advanced)
-        end
-    elseif advanced == true then
-        onDots = function(button)
-            openThreeDotMenu(button)
-        end
-    end
+    local y = reserveSectionSpace(self, 32)
 
     return addToggleRow(
         self.Frame,
         y,
         options.Name or "Toggle",
-        onDots ~= nil,
-        onDots,
+        false,
+        nil,
         options.Default == true,
         true,
         options.Callback
@@ -2046,7 +3291,7 @@ end
 
 function SectionBuilder:Keybind(options)
     options = options or {}
-    local y = reserveSectionSpace(self, 36)
+    local y = reserveSectionSpace(self, 32)
     local row = makeRow(self.Frame, y, options.Name or "Keybind", false)
     local current = options.Default or Enum.KeyCode.Q
     local waiting = false
@@ -2059,7 +3304,7 @@ function SectionBuilder:Keybind(options)
     local keyButton = new("TextButton", {
         AnchorPoint = Vector2.new(1, 0.5),
         Position = UDim2.new(1, -9, 0.5, 0),
-        Size = UDim2.fromOffset(58, 22),
+        Size = UDim2.fromOffset(54, 20),
         BorderSizePixel = 0,
         Text = displayName(current),
         Font = UI_FONT_MEDIUM,
@@ -2067,7 +3312,7 @@ function SectionBuilder:Keybind(options)
         AutoButtonColor = false,
         ZIndex = 9,
     }, row)
-    round(keyButton, 7)
+    round(keyButton, 6)
     themeObject(keyButton, "BackgroundColor3", "field")
     themeObject(keyButton, "TextColor3", "label")
     local keyStroke = stroke(keyButton, THEMES[activeThemeName].stroke, 1, 0.15)
@@ -2123,7 +3368,7 @@ function SectionBuilder:Dropdown(options)
     options = options or {}
     local values = options.Options or {"Option 1", "Option 2"}
     local default = options.Default or values[1] or "None"
-    local y = reserveSectionSpace(self, 58)
+    local y = reserveSectionSpace(self, 48)
     return makeDropdown(
         self.Frame,
         y,
@@ -2145,7 +3390,7 @@ function SectionBuilder:Slider(options)
     local shown = decimals == 0
         and tostring(math.floor(default + 0.5)) .. suffix
         or string.format("%." .. decimals .. "f", default) .. suffix
-    local y = reserveSectionSpace(self, 52)
+    local y = reserveSectionSpace(self, 44)
 
     return makePremiumSlider(self.Frame, y, options.Name or "Slider", shown, alpha, {
         LibraryControl = true,
@@ -2156,6 +3401,268 @@ function SectionBuilder:Slider(options)
         Decimals = decimals,
         Callback = options.Callback,
     })
+end
+
+function SectionBuilder:FOVCustomization(options)
+    options = options or {}
+    local headerHeight = 30
+    local contentHeight = 274
+    local headerY = self.ContentHeight
+    if headerY > 0 then
+        separator(self.Frame, headerY - 1)
+    end
+    self.ContentHeight += headerHeight
+    resizeSection(self)
+
+    local header = new("TextButton", {
+        Position = UDim2.fromOffset(0, headerY),
+        Size = UDim2.new(1, 0, 0, headerHeight),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 7,
+    }, self.Frame)
+    local headerLabel = label(header, {
+        Position = UDim2.fromOffset(10, 0),
+        Size = UDim2.new(1, -38, 1, 0),
+        Text = "FOV customization",
+        TextSize = 11,
+        Font = UI_FONT_MEDIUM,
+        ZIndex = 8,
+    })
+    themeObject(headerLabel, "TextColor3", "label")
+    local chevron = new("ImageLabel", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(1, -15, 0.5, 0),
+        Size = UDim2.fromOffset(10, 10),
+        BackgroundTransparency = 1,
+        Image = resolveHostedIcon("Chevron"),
+        Rotation = 0,
+        ScaleType = Enum.ScaleType.Fit,
+        ZIndex = 8,
+    }, header)
+    themeObject(chevron, "ImageColor3", "icon")
+
+    local body = new("Frame", {
+        Position = UDim2.fromOffset(0, headerY + headerHeight),
+        Size = UDim2.new(1, 0, 0, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        ZIndex = 5,
+    }, self.Frame)
+
+    local function group(y, textValue)
+        local groupText = label(body, {
+            Position = UDim2.fromOffset(10, y + 2),
+            Size = UDim2.new(1, -20, 0, 15),
+            Text = string.upper(textValue),
+            TextSize = 9,
+            Font = UI_FONT_BOLD,
+            ZIndex = 6,
+        })
+        themeObject(groupText, "TextColor3", "muted")
+        local line = new("Frame", {
+            Position = UDim2.fromOffset(10, y + 20),
+            Size = UDim2.new(1, -20, 0, 1),
+            BorderSizePixel = 0,
+            ZIndex = 6,
+        }, body)
+        themeObject(line, "BackgroundColor3", "stroke")
+    end
+
+    local function inlineRow(y, textValue, height)
+        local row = new("Frame", {
+            Position = UDim2.fromOffset(0, y),
+            Size = UDim2.new(1, 0, 0, height or 28),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ZIndex = 6,
+        }, body)
+        local rowLabel = label(row, {
+            Position = UDim2.fromOffset(10, 0),
+            Size = UDim2.new(1, -100, 1, 0),
+            Text = textValue,
+            TextSize = 10,
+            Font = UI_FONT_MEDIUM,
+            ZIndex = 7,
+        })
+        themeObject(rowLabel, "TextColor3", "label")
+        return row
+    end
+
+    local function inlineToggle(y, textValue, default)
+        local row = inlineRow(y, textValue, 28)
+        local enabled = default == true
+        local track = new("Frame", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -10, 0.5, 0),
+            Size = UDim2.fromOffset(20, 12),
+            BackgroundColor3 = enabled and Accent or THEMES[activeThemeName].toggleOff,
+            BorderSizePixel = 0,
+            ZIndex = 8,
+        }, row)
+        round(track, 999)
+        local knob = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(enabled and 1 or 0, enabled and -6 or 6, 0.5, 0),
+            Size = UDim2.fromOffset(8, 8),
+            BackgroundColor3 = Color3.fromRGB(242, 243, 247),
+            BorderSizePixel = 0,
+            ZIndex = 9,
+        }, track)
+        round(knob, 999)
+        local hit = new("TextButton", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -5, 0.5, 0),
+            Size = UDim2.fromOffset(32, 26),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Text = "",
+            ZIndex = 10,
+        }, row)
+        hit.MouseButton1Click:Connect(function()
+            enabled = not enabled
+            tween(track, 0.11, {BackgroundColor3 = enabled and Accent or THEMES[activeThemeName].toggleOff})
+            tween(knob, 0.11, {Position = UDim2.new(enabled and 1 or 0, enabled and -6 or 6, 0.5, 0)})
+        end)
+    end
+
+    local function inlineSlider(y, textValue, minimum, maximum, default, suffix)
+        local row = inlineRow(y, textValue, 30)
+        local alpha = maximum == minimum and 0 or math.clamp((default - minimum) / (maximum - minimum), 0, 1)
+        local value = label(row, {
+            Position = UDim2.fromOffset(108, 0),
+            Size = UDim2.fromOffset(40, 30),
+            Text = "",
+            TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 7,
+        })
+        themeObject(value, "TextColor3", "text")
+        local track = new("Frame", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -10, 0.5, 0),
+            Size = UDim2.fromOffset(82, 3),
+            BorderSizePixel = 0,
+            ZIndex = 7,
+        }, row)
+        round(track, 999)
+        themeObject(track, "BackgroundColor3", "track")
+        local fill = new("Frame", {
+            Size = UDim2.new(alpha, 0, 1, 0),
+            BackgroundColor3 = Accent,
+            BorderSizePixel = 0,
+            ZIndex = 8,
+        }, track)
+        round(fill, 999)
+        accentObject(fill, "BackgroundColor3")
+        local knob = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(alpha, 0, 0.5, 0),
+            Size = UDim2.fromOffset(8, 8),
+            BorderSizePixel = 0,
+            ZIndex = 9,
+        }, track)
+        round(knob, 999)
+        themeObject(knob, "BackgroundColor3", "knob")
+        local hit = new("TextButton", {
+            Position = UDim2.fromOffset(-3, -7),
+            Size = UDim2.new(1, 6, 0, 18),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Text = "",
+            ZIndex = 10,
+        }, track)
+        local dragging = false
+        local function setFromX(x)
+            alpha = math.clamp((x - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
+            fill.Size = UDim2.new(alpha, 0, 1, 0)
+            knob.Position = UDim2.new(alpha, 0, 0.5, 0)
+            value.Text = tostring(math.floor(minimum + (maximum - minimum) * alpha + 0.5)) .. (suffix or "")
+        end
+        value.Text = tostring(default) .. (suffix or "")
+        hit.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                setFromX(input.Position.X)
+            end
+        end)
+        UserInputService.InputChanged:Connect(function(input)
+            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                setFromX(input.Position.X)
+            end
+        end)
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
+            end
+        end)
+    end
+
+    local function inlineColor(y, textValue, defaultColor)
+        local row = inlineRow(y, textValue, 28)
+        local currentColor = defaultColor
+        local hexValue = label(row, {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -34, 0.5, 0),
+            Size = UDim2.fromOffset(62, 18),
+            Text = colorToHex(currentColor),
+            TextSize = 9,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 7,
+        })
+        themeObject(hexValue, "TextColor3", "text")
+        local dot = new("TextButton", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -10, 0.5, 0),
+            Size = UDim2.fromOffset(15, 15),
+            BackgroundColor3 = currentColor,
+            BorderSizePixel = 0,
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 8,
+        }, row)
+        round(dot, 999)
+        dot.MouseButton1Click:Connect(function()
+            openInlineColorPicker(dot, currentColor, function(color)
+                currentColor = color
+                dot.BackgroundColor3 = color
+                hexValue.Text = colorToHex(color)
+            end)
+        end)
+    end
+
+    group(0, "FOV Circle")
+    inlineColor(22, "FOV Color", Color3.fromRGB(145, 174, 255))
+    inlineSlider(50, "Thickness", 1, 8, 2)
+    inlineToggle(80, "Outline", true)
+    inlineColor(108, "Outline Color", Color3.fromRGB(255, 255, 255))
+    inlineSlider(136, "Outline Thickness", 1, 8, 2)
+    group(166, "Fill")
+    inlineToggle(188, "Fill", false)
+    inlineColor(216, "Fill Color", Color3.fromRGB(145, 174, 255))
+    inlineSlider(244, "Fill Opacity", 0, 100, 35, "%")
+
+    local expanded = false
+    header.MouseEnter:Connect(function()
+        tween(header, 0.08, {BackgroundTransparency = 0, BackgroundColor3 = THEMES[activeThemeName].fieldHover})
+    end)
+    header.MouseLeave:Connect(function()
+        tween(header, 0.08, {BackgroundTransparency = 1})
+    end)
+    header.MouseButton1Click:Connect(function()
+        expanded = not expanded
+        self.ContentHeight += expanded and contentHeight or -contentHeight
+        resizeSection(self)
+        tween(body, 0.16, {Size = UDim2.new(1, 0, 0, expanded and contentHeight or 0)})
+        tween(chevron, 0.14, {Rotation = expanded and 180 or 0})
+        if expanded and self.Page.Frame:IsA("ScrollingFrame") then
+            local revealY = math.max(0, self.Y + self.ContentHeight - self.Page.Frame.AbsoluteSize.Y)
+            tween(self.Page.Frame, 0.18, {CanvasPosition = Vector2.new(0, revealY)})
+        end
+    end)
 end
 
 for _, pageName in ipairs(pageOrder) do
@@ -2189,14 +3696,15 @@ for _, page in pairs(PageBuilders) do
 end
 
 local SettingsPopup
-local SettingsPopupOpen = false
+SettingsPopupOpen = false
 
-local function closeSettingsPopup()
+closeSettingsPopup = function()
     if SettingsPopup then
         SettingsPopup:Destroy()
         SettingsPopup = nil
     end
     SettingsPopupOpen = false
+    hidePopupDimmerIfUnused()
 end
 
 local function refreshTheme()
@@ -2587,8 +4095,9 @@ local function openSettingsPopup()
 
     SettingsPopupOpen = true
 
-    local width = 248
-    local height = 176
+    -- Match the 258 px content sections exactly and keep the controls dense.
+    local width = 258
+    local height = 151
 
     local popup = new("Frame", {
         Size = UDim2.fromOffset(width, 0),
@@ -2598,36 +4107,48 @@ local function openSettingsPopup()
         Active = true,
         ZIndex = 1600,
     }, Overlay)
+    scalePopup(popup)
     round(popup, 12)
     local popupStroke = stroke(popup, THEMES[activeThemeName].strokeStrong, 1, 0.05)
     themeObject(popup, "BackgroundColor3", "surface")
     themeObject(popupStroke, "Color", "strokeStrong")
     capturePopupSurface(popup, 1600)
 
-    do
+    local function positionSettingsPopup()
+        if not popup.Parent then
+            return
+        end
+
         local overlayPos = Overlay.AbsolutePosition
         local buttonPos = SettingsButton.AbsolutePosition
         local buttonSize = SettingsButton.AbsoluteSize
+        local contentPos = Content.AbsolutePosition
         local appPos = App.AbsolutePosition
         local appSize = App.AbsoluteSize
         local appLeft = appPos.X - overlayPos.X + 8
         local appRight = appPos.X - overlayPos.X + appSize.X - 8
         local appTop = appPos.Y - overlayPos.Y + 8
         local appBottom = appPos.Y - overlayPos.Y + appSize.Y - 8
+        local renderedWidth = width * AppScale.Scale
+        local renderedHeight = height * AppScale.Scale
 
+        -- Sit on the top bar with the popup's left corner directly over the
+        -- gear, matching the reference instead of floating below it.
         local x = math.clamp(
-            buttonPos.X - overlayPos.X - 2,
+            buttonPos.X - overlayPos.X,
             appLeft,
-            math.max(appLeft, appRight - width)
+            math.max(appLeft, appRight - renderedWidth)
         )
         local y = math.clamp(
-            buttonPos.Y - overlayPos.Y + buttonSize.Y + 6,
+            appPos.Y - overlayPos.Y,
             appTop,
-            math.max(appTop, appBottom - height)
+            math.max(appTop, appBottom - renderedHeight)
         )
 
         popup.Position = UDim2.fromOffset(math.floor(x), math.floor(y))
     end
+
+    positionSettingsPopup()
 
     local title = label(popup, {
         Position = UDim2.fromOffset(11, 6),
@@ -2655,8 +4176,8 @@ local function openSettingsPopup()
     close.MouseButton1Click:Connect(closeSettingsPopup)
 
     local segmented = new("Frame", {
-        Position = UDim2.fromOffset(11, 32),
-        Size = UDim2.new(1, -22, 0, 30),
+        Position = UDim2.fromOffset(11, 28),
+        Size = UDim2.new(1, -22, 0, 28),
         BackgroundColor3 = THEMES[activeThemeName].field,
         BorderSizePixel = 0,
         ZIndex = 1601,
@@ -2767,7 +4288,7 @@ local function openSettingsPopup()
     refreshThemeButtonText()
 
     local accentLabel = label(popup, {
-        Position = UDim2.fromOffset(11, 70),
+        Position = UDim2.fromOffset(11, 60),
         Size = UDim2.fromOffset(65, 16),
         Text = "Accent",
         TextSize = 10,
@@ -2776,9 +4297,33 @@ local function openSettingsPopup()
     })
     themeObject(accentLabel, "TextColor3", "label")
 
+    local accentDots = {}
+    local accentHex
+
+    local function refreshAccentControls()
+        if accentHex and accentHex.Parent then
+            accentHex.Text = colorToHex(Accent)
+        end
+
+        for _, info in ipairs(accentDots) do
+            local selected = info.color == Accent
+            tween(info.dot, 0.10, {
+                Size = UDim2.fromOffset(selected and 18 or 16, selected and 18 or 16),
+                BackgroundTransparency = selected and 0 or 0.08,
+            })
+        end
+    end
+
+    local function applyAccent(color)
+        Accent = color
+        refreshTheme()
+        refreshAccentControls()
+    end
+
     for index, color in ipairs(ACCENTS) do
         local dot = new("TextButton", {
-            Position = UDim2.fromOffset(11 + (index - 1) * 24, 88),
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromOffset(19 + (index - 1) * 24, 85),
             Size = UDim2.fromOffset(16, 16),
             BackgroundColor3 = color,
             BorderSizePixel = 0,
@@ -2787,22 +4332,68 @@ local function openSettingsPopup()
             ZIndex = 1602,
         }, popup)
         round(dot, 999)
-
-        if color == Accent then
-            local selectedStroke = stroke(dot, THEMES[activeThemeName].text, 2, 0.03)
-            themeObject(selectedStroke, "Color", "text")
-        end
+        accentDots[#accentDots + 1] = {color = color, dot = dot}
 
         dot.MouseButton1Click:Connect(function()
-            Accent = color
-            refreshTheme()
-            closeSettingsPopup()
-            openSettingsPopup()
+            applyAccent(color)
         end)
     end
 
+    accentHex = new("TextBox", {
+        Position = UDim2.fromOffset(137, 74),
+        Size = UDim2.fromOffset(72, 22),
+        BackgroundColor3 = THEMES[activeThemeName].field,
+        BorderSizePixel = 0,
+        Text = colorToHex(Accent),
+        ClearTextOnFocus = false,
+        Font = UI_FONT_MEDIUM,
+        TextSize = 9,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 1602,
+    }, popup)
+    round(accentHex, 7)
+    new("UIPadding", {PaddingLeft = UDim.new(0, 7)}, accentHex)
+    themeObject(accentHex, "BackgroundColor3", "field")
+    themeObject(accentHex, "TextColor3", "text")
+
+    local rainbowButton = new("TextButton", {
+        Position = UDim2.fromOffset(220, 75),
+        Size = UDim2.fromOffset(20, 20),
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BorderSizePixel = 0,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 1602,
+    }, popup)
+    round(rainbowButton, 999)
+    new("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 82, 82)),
+            ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 226, 86)),
+            ColorSequenceKeypoint.new(0.50, Color3.fromRGB(91, 224, 173)),
+            ColorSequenceKeypoint.new(0.75, Color3.fromRGB(91, 164, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(188, 104, 255)),
+        }),
+        Rotation = 45,
+    }, rainbowButton)
+
+    local function applyHexAccent()
+        local color = hexToColor(accentHex.Text)
+        if color then
+            applyAccent(color)
+        else
+            accentHex.Text = colorToHex(Accent)
+        end
+    end
+
+    accentHex.FocusLost:Connect(applyHexAccent)
+    rainbowButton.MouseButton1Click:Connect(function()
+        openInlineColorPicker(rainbowButton, Accent, applyAccent)
+    end)
+    refreshAccentControls()
+
     local scaleLabel = label(popup, {
-        Position = UDim2.fromOffset(11, 112),
+        Position = UDim2.fromOffset(11, 103),
         Size = UDim2.new(1, -22, 0, 16),
         Text = "Interface scale",
         TextSize = 10,
@@ -2813,7 +4404,7 @@ local function openSettingsPopup()
 
     local scaleValue = label(popup, {
         AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -11, 0, 112),
+        Position = UDim2.new(1, -11, 0, 103),
         Size = UDim2.fromOffset(55, 16),
         Text = "100%",
         TextSize = 10,
@@ -2824,7 +4415,7 @@ local function openSettingsPopup()
     themeObject(scaleValue, "TextColor3", "text")
 
     local track = new("Frame", {
-        Position = UDim2.fromOffset(11, 138),
+        Position = UDim2.fromOffset(11, 128),
         Size = UDim2.new(1, -22, 0, 5),
         BackgroundColor3 = THEMES[activeThemeName].track,
         BorderSizePixel = 0,
@@ -2833,8 +4424,14 @@ local function openSettingsPopup()
     round(track, 999)
     themeObject(track, "BackgroundColor3", "track")
 
+    local initialScaleAlpha = math.clamp(
+        (interfaceScale - MIN_INTERFACE_SCALE) / (MAX_INTERFACE_SCALE - MIN_INTERFACE_SCALE),
+        0,
+        1
+    )
+
     local fill = new("Frame", {
-        Size = UDim2.new(0.58, 0, 1, 0),
+        Size = UDim2.new(initialScaleAlpha, 0, 1, 0),
         BackgroundColor3 = Accent,
         BorderSizePixel = 0,
         ZIndex = 1602,
@@ -2844,7 +4441,7 @@ local function openSettingsPopup()
 
     local knob = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0.58, 0, 0.5, 0),
+        Position = UDim2.new(initialScaleAlpha, 0, 0.5, 0),
         Size = UDim2.fromOffset(13, 13),
         BackgroundColor3 = THEMES[activeThemeName].knob,
         BorderSizePixel = 0,
@@ -2865,6 +4462,8 @@ local function openSettingsPopup()
         ZIndex = 1604,
     }, track)
 
+    scaleValue.Text = tostring(math.floor(interfaceScale * 100 + 0.5)) .. "%"
+
     local draggingScale = false
 
     local function updateScaleFromX(x)
@@ -2877,8 +4476,12 @@ local function openSettingsPopup()
         fill.Size = UDim2.new(alpha, 0, 1, 0)
         knob.Position = UDim2.new(alpha, 0, 0.5, 0)
 
-        local percent = math.floor(80 + alpha * 40 + 0.5)
+        interfaceScale = MIN_INTERFACE_SCALE
+            + alpha * (MAX_INTERFACE_SCALE - MIN_INTERFACE_SCALE)
+        local percent = math.floor(interfaceScale * 100 + 0.5)
         scaleValue.Text = tostring(percent) .. "%"
+        applyInterfaceScale()
+        task.defer(positionSettingsPopup)
     end
 
     sliderHit.InputBegan:Connect(function(input)
@@ -2906,18 +4509,23 @@ local function openSettingsPopup()
     end)
 
     SettingsPopup = popup
+    showPopupDimmer()
     tween(popup, 0.13, {Size = UDim2.fromOffset(width, height)})
 end
 
 SettingsButton.MouseEnter:Connect(function()
     tween(SettingsButton, 0.08, {
         ImageColor3 = THEMES[activeThemeName].iconHover,
+        BackgroundColor3 = THEMES[activeThemeName].fieldHover,
     })
+    tween(SettingsButtonStroke, 0.08, {Color = THEMES[activeThemeName].strokeStrong})
 end)
 SettingsButton.MouseLeave:Connect(function()
     tween(SettingsButton, 0.08, {
         ImageColor3 = THEMES[activeThemeName].icon,
+        BackgroundColor3 = THEMES[activeThemeName].surface,
     })
+    tween(SettingsButtonStroke, 0.08, {Color = THEMES[activeThemeName].stroke})
 end)
 SettingsButton.MouseButton1Click:Connect(function()
     if SettingsPopupOpen then
@@ -2927,7 +4535,20 @@ SettingsButton.MouseButton1Click:Connect(function()
     end
 end)
 
-UserInputService.InputBegan:Connect(function(input)
+UserInputService.InputBegan:Connect(function(input, processed)
+    if input.KeyCode == Enum.KeyCode.RightShift and not processed then
+        Screen.Enabled = not Screen.Enabled
+        return
+    end
+
+    if input.KeyCode == Enum.KeyCode.Slash
+        and not processed
+        and Screen.Enabled
+        and not UserInputService:GetFocusedTextBox() then
+        SearchBox:CaptureFocus()
+        return
+    end
+
     if input.KeyCode == Enum.KeyCode.Escape then
         closePopup()
         closeDropdown()
@@ -3044,6 +4665,7 @@ UserInputService.InputChanged:Connect(function(input)
         dragInfo.appPosition.Y.Scale,
         dragInfo.appPosition.Y.Offset + delta.Y
     )
+    clampAppToViewport()
 end)
 
 UserInputService.InputEnded:Connect(function(input)
@@ -3074,7 +4696,7 @@ SettingsButton.ImageColor3 = THEMES[activeThemeName].icon
 setActivePage("Combat")
 
 local Consist = {
-    Version = "1.1.0",
+    Version = "1.9.1",
     Gui = Screen,
     App = App,
 }
@@ -3111,12 +4733,137 @@ function Consist:SetAccent(color)
     refreshTheme()
 end
 
+function Consist:SetScale(scale)
+    assert(type(scale) == "number", "Consist:SetScale expects a number")
+    interfaceScale = math.clamp(scale, MIN_INTERFACE_SCALE, MAX_INTERFACE_SCALE)
+    applyInterfaceScale()
+end
+
+function Consist:GetScale()
+    return interfaceScale
+end
+
 function Consist:SetVisible(visible)
     Screen.Enabled = visible ~= false
 end
 
 function Consist:Destroy()
     Screen:Destroy()
+end
+
+do
+    local mainFovColor = Color3.fromRGB(145, 174, 255)
+    local fillColor = mainFovColor
+    local fillUsesMainColor = true
+
+    local rainbow = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 76, 76)),
+        ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255, 224, 92)),
+        ColorSequenceKeypoint.new(0.66, Color3.fromRGB(84, 218, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(177, 104, 255)),
+    })
+    local sunset = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 91, 126)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 151, 92)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(126, 83, 255)),
+    })
+    local water = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 226, 232)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(70, 149, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(102, 91, 235)),
+    })
+    local green = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(92, 232, 151)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(40, 181, 125)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(157, 255, 115)),
+    })
+
+    local fovAdvanced
+    fovAdvanced = {
+        {
+            Name = "Appearance",
+            Title = "FOV Appearance",
+            Controls = {
+                {Type = "Group", Name = "FOV Circle"},
+                {
+                    Type = "Color",
+                    Name = "FOV Color",
+                    Default = mainFovColor,
+                    Reset = true,
+                    ResetColor = Color3.fromRGB(145, 174, 255),
+                    Callback = function(color)
+                        mainFovColor = color
+                        if fillUsesMainColor then
+                            fillColor = color
+                            fovAdvanced[1].Controls[7].Default = color
+                        end
+                    end,
+                },
+                {Type = "Slider", Name = "FOV Opacity", Minimum = 0, Maximum = 100, Default = 100, Suffix = "%"},
+                {Type = "Slider", Name = "Thickness", Minimum = 1, Maximum = 8, Default = 2},
+                {Type = "Group", Name = "Fill"},
+                {Type = "Toggle", Name = "Enabled", Default = false},
+                {
+                    Type = "Color",
+                    Name = "Fill Color",
+                    Default = fillColor,
+                    Reset = true,
+                    ResetColor = function()
+                        return mainFovColor
+                    end,
+                    Callback = function(color, reset)
+                        fillUsesMainColor = reset == true
+                        fillColor = reset and mainFovColor or color
+                        fovAdvanced[1].Controls[7].Default = fillColor
+                    end,
+                },
+                {Type = "Slider", Name = "Fill Opacity", Minimum = 0, Maximum = 100, Default = 35, Suffix = "%"},
+                {Type = "Group", Name = "Outline"},
+                {Type = "Toggle", Name = "Enabled", Default = true},
+                {
+                    Type = "Color",
+                    Name = "Outline Color",
+                    Default = Color3.fromRGB(255, 255, 255),
+                    Reset = true,
+                    ResetColor = Color3.fromRGB(255, 255, 255),
+                },
+                {Type = "Slider", Name = "Outline Opacity", Minimum = 0, Maximum = 100, Default = 100, Suffix = "%"},
+                {Type = "Slider", Name = "Outline Thickness", Minimum = 1, Maximum = 8, Default = 2},
+            },
+        },
+    }
+
+    local Combat = Consist:Page("Combat")
+    local ModeSection = Combat:Section({Side = "Left"})
+
+    ModeSection:Dropdown({
+        Name = "Combat Mode",
+        Options = {"Camlock", "Mouselock", "Silent"},
+        Default = "Camlock",
+    })
+    ModeSection:Toggle({Name = "Toggle", Default = false})
+    ModeSection:Keybind({Name = "Keybind", Default = Enum.KeyCode.Q})
+    ModeSection:Slider({
+        Name = "Prediction",
+        Minimum = 0,
+        Maximum = 0.20,
+        Default = 0.10,
+        Decimals = 2,
+    })
+    ModeSection:Slider({
+        Name = "Smoothness",
+        Minimum = 0,
+        Maximum = 100,
+        Default = 50,
+        Suffix = "%",
+    })
+
+    local FovSection = Combat:Section({Side = "Left"})
+    FovSection:Toggle({Name = "Toggle", Default = false})
+    FovSection:Keybind({Name = "Toggle Key", Default = Enum.KeyCode.F})
+    FovSection:Slider({Name = "FOV Size", Minimum = 25, Maximum = 600, Default = 150})
+
+    Consist:SelectPage("Combat")
 end
 
 return Consist
