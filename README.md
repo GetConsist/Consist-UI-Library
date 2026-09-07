@@ -46,6 +46,14 @@ Main:Slider({
         print(value)
     end,
 })
+
+Main:Keybind({
+    Name = "Keybind",
+    Default = Enum.KeyCode.Q,
+    Callback = function(key)
+        print(key)
+    end,
+})
 ```
 
 Available pages are `Home`, `Combat`, `Visual`, `Player`, `Movement`, `World`, `Misc`, `Configs`, and `Settings`.
@@ -63,4 +71,3 @@ Consist:Destroy()
 ```
 
 The hosted interface uses the Consist icon site already configured inside `src/ConsistLibrary.lua`.
-

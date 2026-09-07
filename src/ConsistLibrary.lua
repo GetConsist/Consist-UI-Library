@@ -1452,7 +1452,28 @@ local function addToggleRow(panel, y, textValue, withDots, onDots, initialState,
     return control
 end
 
-local function openColorPicker(anchorButton)
+local function colorToHex(color)
+    return string.format(
+        "#%02X%02X%02X",
+        math.floor(color.R * 255 + 0.5),
+        math.floor(color.G * 255 + 0.5),
+        math.floor(color.B * 255 + 0.5)
+    )
+end
+
+local function hexToColor(text)
+    local hex = tostring(text or ""):gsub("#", ""):gsub("%s", "")
+    if #hex ~= 6 or not hex:match("^[%da-fA-F]+$") then
+        return nil
+    end
+    return Color3.fromRGB(
+        tonumber(hex:sub(1, 2), 16),
+        tonumber(hex:sub(3, 4), 16),
+        tonumber(hex:sub(5, 6), 16)
+    )
+end
+
+local function openColorPicker(anchorButton, onApplied, initialColor)
     if activeColorPicker and activeColorPickerButton == anchorButton then
         closeColorPicker()
         return
@@ -1508,13 +1529,14 @@ local function openColorPicker(anchorButton)
     x.TextColor3 = THEMES[activeThemeName].muted
     x.MouseButton1Click:Connect(closeColorPicker)
 
+    initialColor = initialColor or Accent
     local wheelImage = resolveColorWheelAsset()
     local wheel = new("ImageLabel", {
         AnchorPoint = Vector2.new(0.5, 0),
         Position = UDim2.new(0.5, 0, 0, 28),
         Size = UDim2.fromOffset(130, 130),
         BackgroundTransparency = wheelImage and 1 or 0,
-        BackgroundColor3 = Accent,
+        BackgroundColor3 = initialColor,
         BorderSizePixel = 0,
         Image = wheelImage or "",
         ScaleType = Enum.ScaleType.Fit,
@@ -1578,7 +1600,7 @@ local function openColorPicker(anchorButton)
         Size = UDim2.fromOffset(105, 27),
         BackgroundColor3 = THEMES[activeThemeName].field,
         BorderSizePixel = 0,
-        Text = "#9496FF",
+        Text = colorToHex(initialColor),
         ClearTextOnFocus = false,
         Font = UI_FONT_MEDIUM,
         TextSize = 10,
@@ -1608,13 +1630,23 @@ local function openColorPicker(anchorButton)
     apply.MouseLeave:Connect(function()
         tween(apply, 0.08, {BackgroundColor3 = Accent})
     end)
+    apply.MouseButton1Click:Connect(function()
+        local selectedColor = hexToColor(hex.Text)
+        if selectedColor then
+            hex.Text = colorToHex(selectedColor)
+            if onApplied then
+                task.spawn(onApplied, selectedColor)
+            end
+            closeColorPicker()
+        end
+    end)
 
     activeColorPicker = picker
     activeColorPickerButton = anchorButton
     tween(picker, 0.13, {Size = UDim2.fromOffset(width, height)})
 end
 
-local function openSecondLevel(anchorRow)
+local function openSecondLevel(anchorRow, submenuConfig)
     if activeSubmenu and activeSubmenuButton == anchorRow then
         closeSubmenu()
         return
@@ -1622,8 +1654,21 @@ local function openSecondLevel(anchorRow)
 
     closeSubmenu()
 
+    submenuConfig = submenuConfig or {}
+    local controls = submenuConfig.Controls or {}
     local width = 176
-    local height = 182
+    local height = 30
+
+    for _, control in ipairs(controls) do
+        if control.Type == "Slider" then
+            height += 52
+        elseif control.Type == "Presets" or control.Type == "Colors" then
+            height += 50
+        else
+            height += 36
+        end
+    end
+    height += 6
 
     local menu = new("Frame", {
         Size = UDim2.fromOffset(width, 0),
@@ -1647,45 +1692,178 @@ local function openSecondLevel(anchorRow)
     local title = label(menu, {
         Position = UDim2.fromOffset(10, 5),
         Size = UDim2.new(1, -20, 0, 18),
-        Text = "Untitled",
+        Text = submenuConfig.Title or submenuConfig.Name or "Options",
         TextSize = 10,
         Font = UI_FONT_MEDIUM,
         ZIndex = 1401,
     })
     title.TextColor3 = THEMES[activeThemeName].label
 
-    local dropdownHolder = makeDropdown(menu, 26, "Untitled", anchorRow:GetAttribute("SecondLevelDropdownValue") or "Untitled", {"Untitled", "Untitled 02", "Untitled 03"}, function(selected) anchorRow:SetAttribute("SecondLevelDropdownValue", selected) end)
-    dropdownHolder.Size = UDim2.new(1, -20, 0, 57)
-    dropdownHolder.Position = UDim2.fromOffset(10, 26)
+    local cursorY = 26
 
-    local r2 = makeRow(menu, 88, "Untitled", false)
-    makeToggle(r2, 150, 9, true)
+    local function addColorControl(control, y)
+        local colorRow = makeRow(menu, y, control.Name or "Color", false)
+        local currentColor = control.Default or Accent
+        local rightInset = 9
 
-    makePremiumSlider(menu, 123, "Untitled", "50%", 0.58)
+        if control.Reset == true then
+            local resetButton = new("ImageButton", {
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, -48, 0.5, 0),
+                Size = UDim2.fromOffset(17, 17),
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                Image = CONSIST_RESET_ICON,
+                ScaleType = Enum.ScaleType.Fit,
+                ZIndex = 1404,
+            }, colorRow)
+            themeObject(resetButton, "ImageColor3", "icon")
+            resetButton.MouseButton1Click:Connect(function()
+                currentColor = type(control.ResetColor) == "function"
+                    and control.ResetColor()
+                    or control.ResetColor
+                    or Accent
+                local swatch = colorRow:FindFirstChild("ColorSwatch", true)
+                if swatch then
+                    swatch.BackgroundColor3 = currentColor
+                end
+                if control.Callback then
+                    task.spawn(control.Callback, currentColor, true)
+                end
+            end)
+            rightInset = 9
+        end
 
-    local colorRow = makeRow(menu, 175, "Untitled", false)
-    local swatchButton = new("TextButton", {
-        AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -9, 0.5, 0),
-        Size = UDim2.fromOffset(44, 20),
-        BackgroundColor3 = THEMES[activeThemeName].field,
-        BorderSizePixel = 0,
-        Text = "",
-        AutoButtonColor = false,
-        ZIndex = 1403,
-    }, colorRow)
-    round(swatchButton, 7)
-    local swatch = new("Frame", {
-        Position = UDim2.fromOffset(4, 4),
-        Size = UDim2.fromOffset(36, 12),
-        BackgroundColor3 = Accent,
-        BorderSizePixel = 0,
-        ZIndex = 1404,
-    }, swatchButton)
-    round(swatch, 5)
-    swatchButton.MouseButton1Click:Connect(function()
-        openColorPicker(swatchButton)
-    end)
+        local swatchButton = new("TextButton", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -rightInset, 0.5, 0),
+            Size = UDim2.fromOffset(32, 20),
+            BackgroundColor3 = THEMES[activeThemeName].field,
+            BorderSizePixel = 0,
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 1403,
+        }, colorRow)
+        round(swatchButton, 7)
+        local swatch = new("Frame", {
+            Name = "ColorSwatch",
+            Position = UDim2.fromOffset(4, 4),
+            Size = UDim2.fromOffset(24, 12),
+            BackgroundColor3 = currentColor,
+            BorderSizePixel = 0,
+            ZIndex = 1404,
+        }, swatchButton)
+        round(swatch, 5)
+        swatchButton.MouseButton1Click:Connect(function()
+            openColorPicker(swatchButton, function(color)
+                currentColor = color
+                swatch.BackgroundColor3 = color
+                if control.Callback then
+                    task.spawn(control.Callback, color, false)
+                end
+            end, currentColor)
+        end)
+    end
+
+    for _, control in ipairs(controls) do
+        if control.Type == "Slider" then
+            local minimum = tonumber(control.Minimum) or 0
+            local maximum = tonumber(control.Maximum) or 100
+            local default = tonumber(control.Default) or minimum
+            local alpha = maximum == minimum and 0 or math.clamp((default - minimum) / (maximum - minimum), 0, 1)
+            makePremiumSlider(menu, cursorY, control.Name or "Slider", tostring(default), alpha, {
+                LibraryControl = true,
+                Minimum = minimum,
+                Maximum = maximum,
+                Default = default,
+                Suffix = control.Suffix or "",
+                Decimals = control.Decimals or 0,
+                Callback = control.Callback,
+            })
+            cursorY += 52
+        elseif control.Type == "Toggle" then
+            local row = makeRow(menu, cursorY, control.Name or "Toggle", false)
+            makeToggle(row, width - 26, 9, control.Default == true, control.Callback)
+            cursorY += 36
+        elseif control.Type == "Color" then
+            addColorControl(control, cursorY)
+            cursorY += 36
+        elseif control.Type == "Colors" then
+            local holder = new("Frame", {
+                Position = UDim2.fromOffset(0, cursorY),
+                Size = UDim2.new(1, 0, 0, 50),
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+            }, menu)
+            local colorsTitle = label(holder, {
+                Position = UDim2.fromOffset(10, 0),
+                Size = UDim2.new(1, -20, 0, 18),
+                Text = control.Name or "Custom Colors",
+                TextSize = 10,
+            })
+            themeObject(colorsTitle, "TextColor3", "label")
+            local colors = control.Colors or {Accent, Color3.fromRGB(112, 206, 225), Color3.fromRGB(255, 138, 168)}
+            for index = 1, math.min(3, #colors) do
+                local colorButton = new("TextButton", {
+                    Position = UDim2.fromOffset(10 + ((index - 1) * 28), 22),
+                    Size = UDim2.fromOffset(21, 21),
+                    BackgroundColor3 = colors[index],
+                    BorderSizePixel = 0,
+                    Text = "",
+                    AutoButtonColor = false,
+                }, holder)
+                round(colorButton, 999)
+                stroke(colorButton, THEMES[activeThemeName].strokeStrong, 1, 0.05)
+                colorButton.MouseButton1Click:Connect(function()
+                    openColorPicker(colorButton, function(color)
+                        colors[index] = color
+                        colorButton.BackgroundColor3 = color
+                        if control.Callback then
+                            task.spawn(control.Callback, colors)
+                        end
+                    end, colors[index])
+                end)
+            end
+            cursorY += 50
+        elseif control.Type == "Presets" then
+            local holder = new("Frame", {
+                Position = UDim2.fromOffset(0, cursorY),
+                Size = UDim2.new(1, 0, 0, 50),
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+            }, menu)
+            local presetTitle = label(holder, {
+                Position = UDim2.fromOffset(10, 0),
+                Size = UDim2.new(1, -20, 0, 18),
+                Text = control.Name or "Presets",
+                TextSize = 10,
+            })
+            themeObject(presetTitle, "TextColor3", "label")
+            local presets = control.Presets or {}
+            for index, preset in ipairs(presets) do
+                if index > 4 then
+                    break
+                end
+                local presetButton = new("TextButton", {
+                    Position = UDim2.fromOffset(10 + ((index - 1) * 32), 22),
+                    Size = UDim2.fromOffset(23, 23),
+                    BackgroundColor3 = Color3.new(1, 1, 1),
+                    BorderSizePixel = 0,
+                    Text = "",
+                    AutoButtonColor = false,
+                }, holder)
+                round(presetButton, 999)
+                stroke(presetButton, THEMES[activeThemeName].strokeStrong, 1, 0.05)
+                new("UIGradient", {Color = preset}, presetButton)
+                presetButton.MouseButton1Click:Connect(function()
+                    if control.Callback then
+                        task.spawn(control.Callback, index, preset)
+                    end
+                end)
+            end
+            cursorY += 50
+        end
+    end
 
     for _, obj in ipairs(menu:GetDescendants()) do
         if obj:IsA("GuiObject") and obj ~= menu and obj.ZIndex < 1400 then
@@ -1698,7 +1876,7 @@ local function openSecondLevel(anchorRow)
     tween(menu, 0.12, {Size = UDim2.fromOffset(width, height)})
 end
 
-local function openThreeDotMenu(anchorButton)
+local function openThreeDotMenu(anchorButton, menuConfig)
     if activePopup and activePopupButton == anchorButton then
         closePopup()
         return
@@ -1707,8 +1885,11 @@ local function openThreeDotMenu(anchorButton)
     closePopup()
     activePopupButton = anchorButton
 
+    menuConfig = menuConfig or {
+        {Name = "Options", Controls = {}},
+    }
     local width = 176
-    local height = 182
+    local height = 10 + (#menuConfig * 34)
 
     local menu = new("Frame", {
         Size = UDim2.fromOffset(width, 0),
@@ -1723,7 +1904,6 @@ local function openThreeDotMenu(anchorButton)
     capturePopupSurface(menu, 1350)
     menu.Position = popupPositionBeside(anchorButton, width, height, false)
 
-    local names = {"Untitled 01","Untitled 02","Untitled 03","Untitled 04","Untitled 05"}
     local selectedIndex = anchorButton:GetAttribute("PopupSelectedIndex") or 0
     local rows = {}
 
@@ -1737,7 +1917,7 @@ local function openThreeDotMenu(anchorButton)
         end
     end
 
-    for index, itemText in ipairs(names) do
+    for index, itemConfig in ipairs(menuConfig) do
         local row = new("TextButton", {
             Position = UDim2.fromOffset(5, 5 + (index - 1) * 34),
             Size = UDim2.new(1, -10, 0, 31),
@@ -1754,7 +1934,7 @@ local function openThreeDotMenu(anchorButton)
         local rowLabel = label(row, {
             Position = UDim2.fromOffset(10, 0),
             Size = UDim2.new(1, -36, 1, 0),
-            Text = itemText,
+            Text = itemConfig.Name or ("Option " .. tostring(index)),
             TextSize = 10,
             ZIndex = 1352,
         })
@@ -1790,7 +1970,7 @@ local function openThreeDotMenu(anchorButton)
             selectedIndex = index
             anchorButton:SetAttribute("PopupSelectedIndex", index)
             refreshRows()
-            openSecondLevel(row)
+            openSecondLevel(row, itemConfig)
         end)
     end
 
@@ -1839,16 +2019,104 @@ end
 function SectionBuilder:Toggle(options)
     options = options or {}
     local y = reserveSectionSpace(self, 36)
+    local advanced = options.Advanced
+    local onDots
+
+    if type(advanced) == "table" then
+        onDots = function(button)
+            openThreeDotMenu(button, advanced)
+        end
+    elseif advanced == true then
+        onDots = function(button)
+            openThreeDotMenu(button)
+        end
+    end
+
     return addToggleRow(
         self.Frame,
         y,
         options.Name or "Toggle",
-        options.Advanced == true,
-        options.Advanced == true and openThreeDotMenu or nil,
+        onDots ~= nil,
+        onDots,
         options.Default == true,
         true,
         options.Callback
     )
+end
+
+function SectionBuilder:Keybind(options)
+    options = options or {}
+    local y = reserveSectionSpace(self, 36)
+    local row = makeRow(self.Frame, y, options.Name or "Keybind", false)
+    local current = options.Default or Enum.KeyCode.Q
+    local waiting = false
+
+    local function displayName(value)
+        local text = tostring(value)
+        return text:gsub("Enum%.KeyCode%.", ""):gsub("Enum%.UserInputType%.", "")
+    end
+
+    local keyButton = new("TextButton", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -9, 0.5, 0),
+        Size = UDim2.fromOffset(58, 22),
+        BorderSizePixel = 0,
+        Text = displayName(current),
+        Font = UI_FONT_MEDIUM,
+        TextSize = 10,
+        AutoButtonColor = false,
+        ZIndex = 9,
+    }, row)
+    round(keyButton, 7)
+    themeObject(keyButton, "BackgroundColor3", "field")
+    themeObject(keyButton, "TextColor3", "label")
+    local keyStroke = stroke(keyButton, THEMES[activeThemeName].stroke, 1, 0.15)
+    themeObject(keyStroke, "Color", "stroke")
+
+    keyButton.MouseButton1Click:Connect(function()
+        waiting = true
+        keyButton.Text = "..."
+    end)
+
+    UserInputService.InputBegan:Connect(function(input, processed)
+        if not waiting or processed then
+            return
+        end
+
+        local selected
+        if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
+            selected = input.KeyCode
+        elseif input.UserInputType == Enum.UserInputType.MouseButton2
+            or input.UserInputType == Enum.UserInputType.MouseButton3 then
+            selected = input.UserInputType
+        end
+
+        if selected then
+            waiting = false
+            current = selected
+            keyButton.Text = displayName(current)
+            if options.Callback then
+                task.spawn(options.Callback, current)
+            end
+        end
+    end)
+
+    return {
+        Instance = row,
+        Set = function(_, value, silent)
+            current = value
+            keyButton.Text = displayName(current)
+            if silent ~= true and options.Callback then
+                task.spawn(options.Callback, current)
+            end
+        end,
+        Get = function()
+            return current
+        end,
+        SetVisible = function(_, visible)
+            row.Visible = visible ~= false
+        end,
+    }
 end
 
 function SectionBuilder:Dropdown(options)
@@ -2806,7 +3074,7 @@ SettingsButton.ImageColor3 = THEMES[activeThemeName].icon
 setActivePage("Combat")
 
 local Consist = {
-    Version = "1.0.0",
+    Version = "1.1.0",
     Gui = Screen,
     App = App,
 }
