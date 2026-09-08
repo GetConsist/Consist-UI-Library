@@ -2,7 +2,7 @@
 
 Reusable Luau interface library for Consist.
 
-Current baseline: `1.9.1`
+Current baseline: `1.9.3`
 
 ## Load the library
 

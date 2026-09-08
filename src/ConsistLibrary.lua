@@ -893,6 +893,7 @@ local activeDropdownButton
 local activeDropdownArrow
 local activeColorPickerButton
 local SettingsPopupOpen = false
+local SettingsPopup
 local closePopup
 local closeSubmenu
 local closeDropdown
@@ -2368,7 +2369,11 @@ local function openInlineColorPicker(anchorButton, initialColor, onSaved)
     scalePopup(picker)
     round(picker, 9)
     capturePopupSurface(picker, 1500)
-    picker.Position = popupPositionOutsideChain(anchorButton, width, height)
+    if SettingsPopupOpen and SettingsPopup and SettingsPopup.Parent then
+        picker.Position = popupPositionNextTo(SettingsPopup, width, height, true)
+    else
+        picker.Position = popupPositionOutsideChain(anchorButton, width, height)
+    end
 
     local title = label(picker, {
         Position = UDim2.fromOffset(10, 4),
@@ -2550,35 +2555,35 @@ local function openInlineColorPicker(anchorButton, initialColor, onSaved)
     end)
 
     local cancel = new("TextButton", {
-        Position = UDim2.fromOffset(10, 207),
-        Size = UDim2.fromOffset(80, 25),
-        BackgroundColor3 = THEMES[activeThemeName].field,
+        Position = UDim2.fromOffset(43, 208),
+        Size = UDim2.fromOffset(62, 23),
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Text = "Cancel",
         Font = UI_FONT_MEDIUM,
-        TextSize = 11,
+        TextSize = 10,
         AutoButtonColor = false,
         ZIndex = 1502,
     }, picker)
-    round(cancel, 6)
-    themeObject(cancel, "BackgroundColor3", "field")
     themeObject(cancel, "TextColor3", "label")
     cancel.MouseButton1Click:Connect(closeColorPicker)
 
     local save = new("TextButton", {
-        Position = UDim2.fromOffset(100, 207),
-        Size = UDim2.fromOffset(80, 25),
-        BackgroundColor3 = Accent,
+        Position = UDim2.fromOffset(112, 208),
+        Size = UDim2.fromOffset(64, 23),
+        BackgroundColor3 = THEMES[activeThemeName].field,
         BorderSizePixel = 0,
-        Text = "Save",
-        TextColor3 = Color3.fromRGB(255, 255, 255),
+        Text = "Apply",
         Font = UI_FONT_MEDIUM,
-        TextSize = 11,
+        TextSize = 10,
         AutoButtonColor = false,
         ZIndex = 1502,
     }, picker)
-    round(save, 6)
-    accentObject(save, "BackgroundColor3")
+    round(save, 5)
+    themeObject(save, "BackgroundColor3", "field")
+    themeObject(save, "TextColor3", "text")
+    local saveStroke = stroke(save, Accent, 1, 0.10)
+    accentObject(saveStroke, "Color")
     save.MouseButton1Click:Connect(function()
         local typed = hexToColor(hex.Text)
         if typed then
@@ -3089,7 +3094,14 @@ local function openThreeDotMenu(anchorButton, menuConfig)
     -- A newly opened first pane has no expanded row yet. Selection is kept
     -- only while this pane is alive so a stale arrow never appears reversed.
     local selectedIndex = 0
-    anchorButton:SetAttribute("PopupSelectedIndex", 0)
+    for index, itemConfig in ipairs(menuConfig) do
+        if itemConfig.Selected == true
+            or (type(itemConfig.Selected) == "function" and itemConfig.Selected()) then
+            selectedIndex = index
+            break
+        end
+    end
+    anchorButton:SetAttribute("PopupSelectedIndex", selectedIndex)
     local rows = {}
     local arrows = {}
     local menuGlyphs = {
@@ -3195,6 +3207,7 @@ local function openThreeDotMenu(anchorButton, menuConfig)
             ZIndex = 1352,
         }, row)
         arrow.ImageColor3 = THEMES[activeThemeName].icon
+        arrow.Visible = type(itemConfig.Action) ~= "function"
         arrows[index] = arrow
 
         row.MouseEnter:Connect(function()
@@ -3212,6 +3225,13 @@ local function openThreeDotMenu(anchorButton, menuConfig)
         end)
 
         row.MouseButton1Click:Connect(function()
+            if type(itemConfig.Action) == "function" then
+                itemConfig.Action()
+                selectedIndex = index
+                anchorButton:SetAttribute("PopupSelectedIndex", selectedIndex)
+                refreshRows()
+                return
+            end
             local wasOpen = activeSubmenu and activeSubmenuButton == row
             local opened = openSecondLevel(row, itemConfig)
             selectedIndex = (not wasOpen and opened) and index or 0
@@ -3276,13 +3296,16 @@ end
 function SectionBuilder:Toggle(options)
     options = options or {}
     local y = reserveSectionSpace(self, 32)
+    local menuConfig = options.Menu
 
     return addToggleRow(
         self.Frame,
         y,
         options.Name or "Toggle",
-        false,
-        nil,
+        type(menuConfig) == "table" and #menuConfig > 0,
+        function(anchorButton)
+            openThreeDotMenu(anchorButton, menuConfig)
+        end,
         options.Default == true,
         true,
         options.Callback
@@ -3292,7 +3315,8 @@ end
 function SectionBuilder:Keybind(options)
     options = options or {}
     local y = reserveSectionSpace(self, 32)
-    local row = makeRow(self.Frame, y, options.Name or "Keybind", false)
+    local row, rowTitle = makeRow(self.Frame, y, options.Name or "Keybind", false)
+    rowTitle.Size = UDim2.new(1, -106, 1, 0)
     local current = options.Default or Enum.KeyCode.Q
     local waiting = false
 
@@ -3317,6 +3341,39 @@ function SectionBuilder:Keybind(options)
     themeObject(keyButton, "TextColor3", "label")
     local keyStroke = stroke(keyButton, THEMES[activeThemeName].stroke, 1, 0.15)
     themeObject(keyStroke, "Color", "stroke")
+
+    local resetButton = new("ImageButton", {
+        Name = "KeybindReset",
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -70, 0.5, 0),
+        Size = UDim2.fromOffset(14, 14),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = CONSIST_RESET_ICON,
+        ScaleType = Enum.ScaleType.Fit,
+        AutoButtonColor = false,
+        ZIndex = 10,
+    }, row)
+    themeObject(resetButton, "ImageColor3", "icon")
+
+    resetButton.MouseEnter:Connect(function()
+        tween(resetButton, 0.08, {ImageColor3 = THEMES[activeThemeName].iconHover})
+    end)
+    resetButton.MouseLeave:Connect(function()
+        tween(resetButton, 0.08, {ImageColor3 = THEMES[activeThemeName].icon})
+    end)
+    resetButton.MouseButton1Click:Connect(function()
+        local resetValue = type(options.ResetValue) == "function"
+            and options.ResetValue()
+            or options.ResetValue
+            or options.Default
+            or Enum.KeyCode.Q
+        current = resetValue
+        keyButton.Text = displayName(current)
+        if options.Callback then
+            task.spawn(options.Callback, current)
+        end
+    end)
 
     keyButton.MouseButton1Click:Connect(function()
         waiting = true
@@ -3695,7 +3752,7 @@ for _, page in pairs(PageBuilders) do
     end
 end
 
-local SettingsPopup
+SettingsPopup = nil
 SettingsPopupOpen = false
 
 closeSettingsPopup = function()
