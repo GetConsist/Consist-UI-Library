@@ -1,149 +1,192 @@
-local BASE_LIBRARY_URL = "https://raw.githubusercontent.com/GetConsist/Consist-UI-Library/refs/heads/main/src/ConsistLibrary.lua"
+local Glass = {}
 
-local source = game:HttpGet(BASE_LIBRARY_URL)
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
 
-local function replacePlain(oldText, newText, label)
-    local first, last = source:find(oldText, 1, true)
-    assert(first, "Consist glass patch could not find: " .. tostring(label or oldText:sub(1, 80)))
-    source = source:sub(1, first - 1) .. newText .. source:sub(last + 1)
-end
+local RENDER_NAME = "ConsistGlassRender"
+local EFFECT_NAME = "ConsistAcrylicDepth"
+local TAG = "ConsistGlassOwned"
+local PART_SIZE = 0.01
+local PART_TRANSPARENCY = 1 - 1e-7
+local INSET = Vector2.new(7, 7)
 
-local function replaceRange(startMarker, endMarker, newText, label)
+local PALETTES = {
+    Light = {
+        shell = Color3.fromRGB(253, 253, 253),
+        surface = Color3.fromRGB(243, 244, 247),
+        field = Color3.fromRGB(237, 239, 243),
+        popup = Color3.fromRGB(243, 244, 247),
+        shellTransparency = 0.18,
+        surfaceTransparency = 0.36,
+        fieldTransparency = 0.24,
+        popupTransparency = 0.18,
+        blur = 0.76,
+        tintA = Color3.fromRGB(245, 247, 252),
+        tintB = Color3.fromRGB(236, 242, 251),
+    },
+    Dark = {
+        shell = Color3.fromRGB(18, 19, 22),
+        surface = Color3.fromRGB(23, 24, 28),
+        field = Color3.fromRGB(28, 29, 34),
+        popup = Color3.fromRGB(23, 24, 28),
+        shellTransparency = 0.34,
+        surfaceTransparency = 0.48,
+        fieldTransparency = 0.32,
+        popupTransparency = 0.23,
+        blur = 0.82,
+        tintA = Color3.fromRGB(237, 241, 250),
+        tintB = Color3.fromRGB(220, 228, 244),
+    },
+    Black = {
+        shell = Color3.fromRGB(9, 10, 12),
+        surface = Color3.fromRGB(14, 15, 18),
+        field = Color3.fromRGB(19, 20, 24),
+        popup = Color3.fromRGB(14, 15, 18),
+        shellTransparency = 0.30,
+        surfaceTransparency = 0.43,
+        fieldTransparency = 0.28,
+        popupTransparency = 0.20,
+        blur = 0.85,
+        tintA = Color3.fromRGB(232, 236, 247),
+        tintB = Color3.fromRGB(210, 218, 238),
+    },
+}
+
+local function plainReplaceRange(source, startMarker, endMarker, replacement)
     local first = source:find(startMarker, 1, true)
-    assert(first, "Consist glass patch could not find start: " .. tostring(label or startMarker))
+    if not first then
+        return source, false
+    end
+
     local finish = source:find(endMarker, first + #startMarker, true)
-    assert(finish, "Consist glass patch could not find end: " .. tostring(label or endMarker))
-    source = source:sub(1, first - 1) .. newText .. source:sub(finish)
-end
-
--- Keep dropdown borders consistent with the section/sidebar outline language.
-source = source:gsub(
-    "local menuStroke = stroke%(menu, THEMES%[activeThemeName%]%.stroke, 1, 0%.15%)",
-    "local menuStroke = stroke(menu, THEMES[activeThemeName].stroke, 1, 0)"
-)
-source = source:gsub(
-    "local fs = stroke%(field, THEMES%[activeThemeName%]%.stroke, 1, 0%.15%)",
-    "local fs = stroke(field, THEMES[activeThemeName].stroke, 1, 0)"
-)
-
-local appStrokeLine = [[local AppStroke = stroke(App, THEMES[activeThemeName].strokeStrong, 1, 0)]]
-local glassInfrastructure = appStrokeLine .. [[
-
--- Consist acrylic/glass layer. The physical blur is one deep layer behind the
--- full app. Sections and controls use translucent tint layers over that same
--- blur so they read as separate glass depths without stacking expensive blur
--- geometry for every card.
-local ConsistGlassLighting = game:GetService("Lighting")
-local CONSIST_GLASS_RENDER = "Consist Acrylic Blur Render"
-local CONSIST_GLASS_EFFECT = "Consist Acrylic Blur"
-local CONSIST_GLASS_TAG = "ConsistAcrylicBlur"
-local CONSIST_GLASS_PART_SIZE = 0.01
-local CONSIST_GLASS_PART_TRANSPARENCY = 1 - 1e-7
-local CONSIST_GLASS_INSET = Vector2.new(8, 8)
-
-local function glassShellTransparency(themeName)
-    if themeName == "Light" then
-        return 0.20
-    elseif themeName == "Black" then
-        return 0.31
-    end
-    return 0.35
-end
-
-local function glassBlurIntensity(themeName)
-    if themeName == "Light" then
-        return 0.74
-    elseif themeName == "Black" then
-        return 0.84
-    end
-    return 0.81
-end
-
-local function glassTransparencyForKey(key, themeName)
-    themeName = themeName or activeThemeName
-
-    if key == "surface" then
-        if themeName == "Light" then return 0.38 end
-        if themeName == "Black" then return 0.45 end
-        return 0.48
-    elseif key == "field" then
-        if themeName == "Light" then return 0.20 end
-        if themeName == "Black" then return 0.27 end
-        return 0.30
-    elseif key == "fieldHover" then
-        if themeName == "Light" then return 0.13 end
-        if themeName == "Black" then return 0.19 end
-        return 0.21
-    elseif key == "popup" then
-        if themeName == "Light" then return 0.16 end
-        if themeName == "Black" then return 0.21 end
-        return 0.24
+    if not finish then
+        return source, false
     end
 
-    return nil
+    return source:sub(1, first - 1) .. replacement .. source:sub(finish), true
 end
 
-App.BackgroundTransparency = glassShellTransparency(activeThemeName)
+function Glass.PatchLibrarySource(source)
+    if type(source) ~= "string" or source == "" then
+        return source
+    end
 
-local AppGlassGradient = new("UIGradient", {
-    Rotation = 18,
-}, App)
+    source = source:gsub(
+        "local menuStroke = stroke%(menu, THEMES%[activeThemeName%]%.stroke, 1, 0%.15%)",
+        "local menuStroke = stroke(menu, THEMES[activeThemeName].stroke, 1, 0)"
+    )
+    source = source:gsub(
+        "local fs = stroke%(field, THEMES%[activeThemeName%]%.stroke, 1, 0%.15%)",
+        "local fs = stroke(field, THEMES[activeThemeName].stroke, 1, 0)"
+    )
 
-local function refreshAppGlassGradient()
-    local white = Color3.new(1, 1, 1)
-    local accentMix = activeThemeName == "Light" and 0.025 or 0.075
-    local accentTint = white:Lerp(Accent, accentMix)
-    local softTint = white:Lerp(Accent, accentMix * 0.40)
+    local replacement = [[local function animateThemeTransition(themeName, originAbsolutePosition, onFinished)
+    if themeName == activeThemeName or themeTransitionBusy then
+        if onFinished then
+            onFinished()
+        end
+        return
+    end
 
-    AppGlassGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, white),
-        ColorSequenceKeypoint.new(0.42, softTint),
-        ColorSequenceKeypoint.new(0.72, accentTint),
-        ColorSequenceKeypoint.new(1, white),
-    })
+    themeTransitionBusy = true
+    tweenThemeVisuals(themeName, 0.24, true)
+
+    task.delay(0.24, function()
+        activeThemeName = themeName
+        refreshTheme()
+        if onFinished then
+            onFinished()
+        end
+        themeTransitionBusy = false
+    end)
 end
 
-refreshAppGlassGradient()
+]]
 
-local ConsistGlassController = (function()
+    local patched
+    source, patched = plainReplaceRange(
+        source,
+        "local function animateThemeTransition(themeName, originAbsolutePosition, onFinished)",
+        "local function setActivePage",
+        replacement
+    )
+
+    return source
+end
+
+local function colorDistance(a, b)
+    local dr = a.R - b.R
+    local dg = a.G - b.G
+    local db = a.B - b.B
+    return math.sqrt(dr * dr + dg * dg + db * db)
+end
+
+local function colorNear(a, b, tolerance)
+    return colorDistance(a, b) <= (tolerance or 0.025)
+end
+
+local function rayPlaneIntersect(planePosition, planeNormal, rayOrigin, rayDirection)
+    local denominator = planeNormal:Dot(rayDirection)
+    if math.abs(denominator) < 0.00001 then
+        return nil
+    end
+
+    local numerator = planeNormal:Dot(rayOrigin - planePosition)
+    local distance = -numerator / denominator
+    return rayOrigin + rayDirection * distance
+end
+
+function Glass.Attach(Consist)
+    assert(type(Consist) == "table", "Consist glass expected the Consist library table")
+    assert(Consist.Gui and Consist.App, "Consist glass could not find Gui/App")
+
+    local screen = Consist.Gui
+    local app = Consist.App
+    local alive = true
+    local bound = false
+    local connections = {}
+    local lastTheme
+
     pcall(function()
-        RunService:UnbindFromRenderStep(CONSIST_GLASS_RENDER)
+        RunService:UnbindFromRenderStep(RENDER_NAME)
     end)
 
-    local oldEffect = ConsistGlassLighting:FindFirstChild(CONSIST_GLASS_EFFECT)
-    if oldEffect then
-        oldEffect:Destroy()
-    end
-
-    local function cleanTagged(parent)
-        if not parent then
-            return
-        end
-        for _, object in ipairs(parent:GetChildren()) do
-            if object:GetAttribute(CONSIST_GLASS_TAG) then
-                pcall(function()
-                    object:Destroy()
-                end)
+    for _, parent in ipairs({workspace, workspace.CurrentCamera, Lighting}) do
+        if parent then
+            for _, object in ipairs(parent:GetChildren()) do
+                if object:GetAttribute(TAG) then
+                    pcall(function()
+                        object:Destroy()
+                    end)
+                end
             end
         end
     end
 
-    cleanTagged(workspace)
-    cleanTagged(workspace.CurrentCamera)
+    local oldGradient = app:FindFirstChild("ConsistAcrylicTint")
+    if oldGradient then
+        oldGradient:Destroy()
+    end
+
+    local gradient = Instance.new("UIGradient")
+    gradient.Name = "ConsistAcrylicTint"
+    gradient.Rotation = 20
+    gradient.Parent = app
 
     local effect = Instance.new("DepthOfFieldEffect")
-    effect.Name = CONSIST_GLASS_EFFECT
-    effect:SetAttribute(CONSIST_GLASS_TAG, true)
+    effect.Name = EFFECT_NAME
+    effect:SetAttribute(TAG, true)
     effect.FarIntensity = 0
-    effect.NearIntensity = glassBlurIntensity(activeThemeName)
+    effect.NearIntensity = 0.82
     effect.FocusDistance = 0.25
     effect.InFocusRadius = 0
     effect.Enabled = false
-    effect.Parent = ConsistGlassLighting
+    effect.Parent = Lighting
 
     local part = Instance.new("Part")
     part.Name = "ConsistAcrylicGlass"
-    part.Size = Vector3.new(CONSIST_GLASS_PART_SIZE, CONSIST_GLASS_PART_SIZE, CONSIST_GLASS_PART_SIZE)
+    part:SetAttribute(TAG, true)
+    part.Size = Vector3.new(PART_SIZE, PART_SIZE, PART_SIZE)
     part.Anchored = true
     part.CanCollide = false
     part.CanTouch = false
@@ -151,26 +194,96 @@ local ConsistGlassController = (function()
     part.CastShadow = false
     part.Material = Enum.Material.Glass
     part.Transparency = 1
-    part:SetAttribute(CONSIST_GLASS_TAG, true)
     part.Parent = workspace
 
     local mesh = Instance.new("BlockMesh")
     mesh.Parent = part
 
-    local bound = false
-    local destroyed = false
-
-    local function rayPlaneIntersect(planePosition, planeNormal, rayOrigin, rayDirection)
-        local denominator = planeNormal:Dot(rayDirection)
-        if math.abs(denominator) < 0.00001 then
-            return nil
+    local function currentTheme()
+        local ok, result = pcall(function()
+            return Consist:GetTheme()
+        end)
+        if ok and PALETTES[result] then
+            return result
         end
-        local numerator = planeNormal:Dot(rayOrigin - planePosition)
-        local distance = -numerator / denominator
-        return rayOrigin + rayDirection * distance
+        return "Dark"
     end
 
-    local function hidePhysicalBlur()
+    local function applyGradient(themeName)
+        local palette = PALETTES[themeName] or PALETTES.Dark
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
+            ColorSequenceKeypoint.new(0.38, palette.tintA),
+            ColorSequenceKeypoint.new(0.72, palette.tintB),
+            ColorSequenceKeypoint.new(1, Color3.new(1, 1, 1)),
+        })
+        gradient.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.01),
+            NumberSequenceKeypoint.new(0.45, 0.045),
+            NumberSequenceKeypoint.new(0.75, 0.025),
+            NumberSequenceKeypoint.new(1, 0.01),
+        })
+    end
+
+    local function applyObjectGlass(object, palette)
+        if not object:IsA("GuiObject") or object == app then
+            return
+        end
+
+        if object:IsA("Frame") and object:FindFirstChild("ConsistInnerSectionBorder") then
+            object.BackgroundTransparency = palette.surfaceTransparency
+            return
+        end
+
+        if object.BackgroundTransparency >= 0.94 then
+            return
+        end
+
+        local z = object.ZIndex or 1
+        local color = object.BackgroundColor3
+
+        if z >= 1000 and (colorNear(color, palette.popup, 0.045) or colorNear(color, palette.surface, 0.045)) then
+            object.BackgroundTransparency = palette.popupTransparency
+            return
+        end
+
+        if colorNear(color, palette.field, 0.035) then
+            object.BackgroundTransparency = palette.fieldTransparency
+            return
+        end
+
+        if colorNear(color, palette.surface, 0.035) then
+            object.BackgroundTransparency = palette.surfaceTransparency
+        end
+    end
+
+    local function refreshGlass()
+        if not alive or not app.Parent then
+            return
+        end
+
+        local themeName = currentTheme()
+        local palette = PALETTES[themeName] or PALETTES.Dark
+        lastTheme = themeName
+
+        app.BackgroundTransparency = palette.shellTransparency
+        effect.NearIntensity = palette.blur
+        applyGradient(themeName)
+
+        for _, object in ipairs(app:GetDescendants()) do
+            if object:IsA("GuiObject") then
+                applyObjectGlass(object, palette)
+            end
+        end
+
+        for _, object in ipairs(screen:GetDescendants()) do
+            if object:IsA("GuiObject") and not object:IsDescendantOf(app) then
+                applyObjectGlass(object, palette)
+            end
+        end
+    end
+
+    local function hideBlur()
         if part then
             part.Transparency = 1
         end
@@ -180,14 +293,14 @@ local ConsistGlassController = (function()
     end
 
     local function updateGeometry()
-        if destroyed or not Screen.Enabled or not App.Visible or not App.Parent then
-            hidePhysicalBlur()
+        if not alive or not screen.Enabled or not app.Visible or not app.Parent then
+            hideBlur()
             return
         end
 
         local camera = workspace.CurrentCamera
         if not camera then
-            hidePhysicalBlur()
+            hideBlur()
             return
         end
 
@@ -195,13 +308,13 @@ local ConsistGlassController = (function()
             part.Parent = workspace
         end
 
-        local appPosition = App.AbsolutePosition
-        local appSize = App.AbsoluteSize
-        local corner0 = Vector2.new(appPosition.X, appPosition.Y) + CONSIST_GLASS_INSET
-        local corner1 = Vector2.new(appPosition.X + appSize.X, appPosition.Y + appSize.Y) - CONSIST_GLASS_INSET
+        local position = app.AbsolutePosition
+        local size = app.AbsoluteSize
+        local corner0 = Vector2.new(position.X, position.Y) + INSET
+        local corner1 = Vector2.new(position.X + size.X, position.Y + size.Y) - INSET
 
         if corner1.X <= corner0.X or corner1.Y <= corner0.Y then
-            hidePhysicalBlur()
+            hideBlur()
             return
         end
 
@@ -214,7 +327,7 @@ local ConsistGlassController = (function()
         local world1 = rayPlaneIntersect(planeOrigin, planeNormal, ray1.Origin, ray1.Direction)
 
         if not world0 or not world1 then
-            hidePhysicalBlur()
+            hideBlur()
             return
         end
 
@@ -226,248 +339,130 @@ local ConsistGlassController = (function()
         part.CFrame = camera.CFrame
         mesh.Offset = center
         mesh.Scale = Vector3.new(
-            math.abs(localSize.X) / CONSIST_GLASS_PART_SIZE,
-            math.abs(localSize.Y) / CONSIST_GLASS_PART_SIZE,
+            math.abs(localSize.X) / PART_SIZE,
+            math.abs(localSize.Y) / PART_SIZE,
             0.05
         )
 
         part.Material = Enum.Material.Glass
-        part.Transparency = CONSIST_GLASS_PART_TRANSPARENCY
-        part.Anchored = true
-        part.CanCollide = false
-        part.CanTouch = false
-        part.CanQuery = false
-
+        part.Transparency = PART_TRANSPARENCY
         effect.Enabled = true
         effect.FarIntensity = 0
-        effect.NearIntensity = glassBlurIntensity(activeThemeName)
+        effect.NearIntensity = (PALETTES[currentTheme()] or PALETTES.Dark).blur
         effect.FocusDistance = 0.25 - camera.NearPlaneZ
         effect.InFocusRadius = 0
     end
 
-    local function setEnabled(enabled)
-        enabled = enabled == true and not destroyed
+    local function setBlurRunning(enabled)
+        enabled = enabled == true and alive
 
         if enabled and not bound then
             RunService:BindToRenderStep(
-                CONSIST_GLASS_RENDER,
+                RENDER_NAME,
                 Enum.RenderPriority.Last.Value,
                 updateGeometry
             )
             bound = true
             updateGeometry()
+        elseif not enabled and bound then
+            pcall(function()
+                RunService:UnbindFromRenderStep(RENDER_NAME)
+            end)
+            bound = false
+            hideBlur()
         elseif not enabled then
-            if bound then
-                pcall(function()
-                    RunService:UnbindFromRenderStep(CONSIST_GLASS_RENDER)
-                end)
-                bound = false
-            end
-            hidePhysicalBlur()
+            hideBlur()
         end
     end
 
-    local function refreshThemeGlass()
-        App.BackgroundTransparency = glassShellTransparency(activeThemeName)
-        refreshAppGlassGradient()
-        if effect then
-            effect.NearIntensity = glassBlurIntensity(activeThemeName)
+    connections[#connections + 1] = screen:GetPropertyChangedSignal("Enabled"):Connect(function()
+        setBlurRunning(screen.Enabled)
+        if screen.Enabled then
+            task.defer(refreshGlass)
         end
-        if Screen.Enabled then
-            updateGeometry()
-        end
-    end
-
-    local enabledConnection = Screen:GetPropertyChangedSignal("Enabled"):Connect(function()
-        setEnabled(Screen.Enabled)
     end)
 
-    local ancestryConnection
-    ancestryConnection = Screen.AncestryChanged:Connect(function(_, parent)
+    connections[#connections + 1] = app.DescendantAdded:Connect(function(object)
+        task.defer(function()
+            if not alive or not object.Parent then
+                return
+            end
+            local palette = PALETTES[currentTheme()] or PALETTES.Dark
+            if object:IsA("GuiObject") then
+                applyObjectGlass(object, palette)
+            elseif object:IsA("UIStroke") and object.Parent and object.Parent:IsA("GuiObject") then
+                applyObjectGlass(object.Parent, palette)
+            end
+        end)
+    end)
+
+    connections[#connections + 1] = screen.DescendantAdded:Connect(function(object)
+        if object:IsDescendantOf(app) then
+            return
+        end
+        task.defer(function()
+            if alive and object.Parent and object:IsA("GuiObject") then
+                applyObjectGlass(object, PALETTES[currentTheme()] or PALETTES.Dark)
+            end
+        end)
+    end)
+
+    task.spawn(function()
+        while alive and screen.Parent do
+            local themeName = currentTheme()
+            if themeName ~= lastTheme then
+                refreshGlass()
+            end
+            task.wait(0.12)
+        end
+    end)
+
+    connections[#connections + 1] = screen.AncestryChanged:Connect(function(_, parent)
         if parent then
             return
         end
 
-        destroyed = true
-        setEnabled(false)
+        alive = false
+        setBlurRunning(false)
 
-        if enabledConnection then
-            enabledConnection:Disconnect()
-            enabledConnection = nil
+        for _, connection in ipairs(connections) do
+            pcall(function()
+                connection:Disconnect()
+            end)
         end
-        if ancestryConnection then
-            ancestryConnection:Disconnect()
-            ancestryConnection = nil
-        end
+
         if effect then
             effect:Destroy()
-            effect = nil
         end
         if part then
             part:Destroy()
-            part = nil
         end
     end)
 
-    setEnabled(Screen.Enabled)
+    refreshGlass()
+    setBlurRunning(screen.Enabled)
 
     return {
-        SetEnabled = setEnabled,
-        RefreshTheme = refreshThemeGlass,
-        Update = updateGeometry,
+        Refresh = refreshGlass,
+        Destroy = function()
+            if not alive then
+                return
+            end
+            alive = false
+            setBlurRunning(false)
+            for _, connection in ipairs(connections) do
+                pcall(function()
+                    connection:Disconnect()
+                end)
+            end
+            if effect then
+                effect:Destroy()
+            end
+            if part then
+                part:Destroy()
+            end
+        end,
     }
-end)()
-]]
-replacePlain(appStrokeLine, glassInfrastructure, "App glass infrastructure")
-
-local oldThemeObject = [[local themed = {}
-local function themeObject(object, property, key)
-    themed[#themed + 1] = {object = object, property = property, key = key}
-    object[property] = THEMES[activeThemeName][key]
-end]]
-local newThemeObject = [[local themed = {}
-local function themeObject(object, property, key)
-    themed[#themed + 1] = {object = object, property = property, key = key}
-    object[property] = THEMES[activeThemeName][key]
-
-    if property == "BackgroundColor3" and object:IsA("GuiObject") then
-        local targetTransparency = glassTransparencyForKey(key, activeThemeName)
-        if targetTransparency ~= nil and object.BackgroundTransparency < 0.95 then
-            object.BackgroundTransparency = targetTransparency
-            object:SetAttribute("ConsistGlassManaged", true)
-            object:SetAttribute("ConsistGlassThemeKey", key)
-        end
-    end
-end]]
-replacePlain(oldThemeObject, newThemeObject, "themeObject glass behavior")
-
--- Expanded dropdown surfaces are denser glass than normal controls and retain
--- the normal Consist outline.
-local dropdownRound = [[    round(menu, 8)
-    local menuStroke = stroke(menu, THEMES[activeThemeName].stroke, 1, 0)]]
-local dropdownGlass = [[    round(menu, 8)
-    menu.BackgroundColor3 = THEMES[activeThemeName].popup
-    menu.BackgroundTransparency = glassTransparencyForKey("popup", activeThemeName) or 0.24
-    menu:SetAttribute("ConsistGlassManaged", true)
-    menu:SetAttribute("ConsistGlassThemeKey", "popup")
-    themeObject(menu, "BackgroundColor3", "popup")
-    local menuStroke = stroke(menu, THEMES[activeThemeName].stroke, 1, 0)]]
-replacePlain(dropdownRound, dropdownGlass, "dropdown glass popup")
-
-
--- Three-dot panes and their second-level panes use the same denser popup glass.
-source = source:gsub(
-    'round%(menu, 7%)\n    stroke%(menu, THEMES%[activeThemeName%]%.strokeStrong, 1, 0%.76%)',
-    'round(menu, 7)\n    menu.BackgroundTransparency = glassTransparencyForKey("popup", activeThemeName) or 0.24\n    stroke(menu, THEMES[activeThemeName].strokeStrong, 1, 0.76)'
-)
-
--- Inline color pickers stay readable but inherit the glass behind them.
-source = source:gsub(
-    'round%(picker, 9%)\n    capturePopupSurface%(picker, 1500%)',
-    'round(picker, 9)\n    picker.BackgroundTransparency = glassTransparencyForKey("popup", activeThemeName) or 0.24\n    capturePopupSurface(picker, 1500)'
-)
-
--- Theme refresh also restores glass opacity rules. Objects that intentionally
--- started transparent (labels, blank rows, etc.) are never marked as managed.
-local oldRefreshLoop = [[    for _, item in ipairs(themed) do
-        if item.object and item.object.Parent then
-            item.object[item.property] = theme[item.key]
-        end
-    end]]
-local newRefreshLoop = [[    for _, item in ipairs(themed) do
-        if item.object and item.object.Parent then
-            item.object[item.property] = theme[item.key]
-
-            if item.property == "BackgroundColor3"
-                and item.object:IsA("GuiObject")
-                and item.object:GetAttribute("ConsistGlassManaged") then
-                local glassKey = item.object:GetAttribute("ConsistGlassThemeKey") or item.key
-                local targetTransparency = glassTransparencyForKey(glassKey, activeThemeName)
-                if targetTransparency ~= nil then
-                    item.object.BackgroundTransparency = targetTransparency
-                end
-            end
-        end
-    end]]
-replacePlain(oldRefreshLoop, newRefreshLoop, "refreshTheme glass loop")
-
-local oldNavTransparency = [[        info.button.BackgroundTransparency = active and 0 or 1]]
-local newNavTransparency = [[        info.button.BackgroundTransparency = active
-            and (glassTransparencyForKey("field", activeThemeName) or 0)
-            or 1]]
-replacePlain(oldNavTransparency, newNavTransparency, "active navigation glass")
-
-local oldRefreshEnding = [[    SearchIcon.ImageColor3 = theme.iconHover
-    SearchIcon.ImageTransparency = 0
-    SettingsButton.ImageColor3 = theme.icon
-end]]
-local newRefreshEnding = [[    SearchIcon.ImageColor3 = theme.iconHover
-    SearchIcon.ImageTransparency = 0
-    SettingsButton.ImageColor3 = theme.icon
-
-    if ConsistGlassController then
-        ConsistGlassController.RefreshTheme()
-    end
-end]]
-replacePlain(oldRefreshEnding, newRefreshEnding, "refreshTheme glass controller")
-
-local oldAppThemeTween = [[        addTween(App, {
-            BackgroundColor3 = target.shell,
-        })]]
-local newAppThemeTween = [[        addTween(App, {
-            BackgroundColor3 = target.shell,
-            BackgroundTransparency = glassShellTransparency(themeName),
-        })]]
-replacePlain(oldAppThemeTween, newAppThemeTween, "theme tween shell opacity")
-
--- Every theme transition is now the same restrained cross-fade. The old
--- Light <-> Dark/Black radial/sweeping wipe is intentionally removed.
-local simpleThemeTransition = [[local function animateThemeTransition(themeName, originAbsolutePosition, onFinished)
-    if themeName == activeThemeName or themeTransitionBusy then
-        if onFinished then
-            onFinished()
-        end
-        return
-    end
-
-    themeTransitionBusy = true
-    local visualTweens = tweenThemeVisuals(themeName, 0.28, true)
-    local completionTween = visualTweens[1]
-    local finished = false
-
-    local function completeTransition()
-        if finished then
-            return
-        end
-        finished = true
-        activeThemeName = themeName
-        refreshTheme()
-        if onFinished then
-            onFinished()
-        end
-        themeTransitionBusy = false
-    end
-
-    if completionTween then
-        local completionConnection
-        completionConnection = completionTween.Completed:Connect(function()
-            if completionConnection then
-                completionConnection:Disconnect()
-                completionConnection = nil
-            end
-            completeTransition()
-        end)
-    else
-        completeTransition()
-    end
 end
 
-]]
-replaceRange(
-    "local function animateThemeTransition(themeName, originAbsolutePosition, onFinished)",
-    "local function setActivePage",
-    simpleThemeTransition,
-    "theme transition"
-)
-
-return loadstring(source)()
+return Glass
